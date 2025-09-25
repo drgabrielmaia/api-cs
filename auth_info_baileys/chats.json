@@ -1,0 +1,50 @@
+[
+  {
+    "id": "120363386831225242@g.us",
+    "name": "Promoções",
+    "isGroup": true,
+    "lastMessage": {
+      "body": "ou outro?",
+      "timestamp": 1758769642776,
+      "isFromMe": false
+    },
+    "unreadCount": 7,
+    "timestamp": 1758769642776
+  },
+  {
+    "id": "558386255655@s.whatsapp.net",
+    "name": "558386255655@s.whatsapp.net",
+    "isGroup": false,
+    "lastMessage": {
+      "body": "Amém! Mas é só de 3h kkkk",
+      "timestamp": 1758769598397,
+      "isFromMe": true
+    },
+    "unreadCount": 0,
+    "timestamp": 1758769598397
+  },
+  {
+    "id": "558386868622@s.whatsapp.net",
+    "name": "558386868622@s.whatsapp.net",
+    "isGroup": false,
+    "lastMessage": {
+      "body": "oie",
+      "timestamp": 1758769532361,
+      "isFromMe": true
+    },
+    "unreadCount": 0,
+    "timestamp": 1758769532361
+  },
+  {
+    "id": "5511986784297:98@s.whatsapp.net",
+    "name": "5511986784297:98@s.whatsapp.net",
+    "isGroup": false,
+    "lastMessage": {
+      "body": ".",
+      "timestamp": 1758769323370,
+      "isFromMe": true
+    },
+    "unreadCount": 0,
+    "timestamp": 1758769323370
+  }
+]

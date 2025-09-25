@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  whatsapp-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: whatsapp-api
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+    volumes:
+      # Persist WhatsApp auth data between container restarts
+      - ./auth_info_baileys:/app/auth_info_baileys:rw
+      # Optional: Mount logs directory
+      - ./logs:/app/logs:rw
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+
+networks:
+  whatsapp-network:
+    driver: bridge
+
+volumes:
+  whatsapp_auth:
+    driver: local
+  whatsapp_logs:
+    driver: local
