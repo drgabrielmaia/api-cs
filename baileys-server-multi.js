@@ -213,22 +213,32 @@ async function connectUserToWhatsApp(userId) {
 
     session.sock.ev.on('creds.update', saveCreds);
 
-    session.sock.ev.on('messages.upsert', async ({ messages }) => {
+    session.sock.ev.on('messages.upsert', async ({ messages, type }) => {
         console.log(`🔥 [${userId}] EVENTO MESSAGES.UPSERT RECEBIDO!`);
         console.log(`📊 [${userId}] Número de mensagens:`, messages.length);
+        console.log(`📊 [${userId}] Type:`, type);
 
-        const message = messages[0];
+        // Filtrar apenas mensagens novas e reais
+        const validMessages = messages.filter(msg => {
+            // Ignorar mensagens sem conteúdo
+            if (!msg.message) return false;
+            // Ignorar status broadcasts
+            if (msg.key.remoteJid === 'status@broadcast') return false;
+            // Ignorar mensagens com problemas de descriptografia
+            if (msg.messageStubType) return false;
+            return true;
+        });
+
+        console.log(`✅ [${userId}] Mensagens válidas:`, validMessages.length);
+
+        if (validMessages.length === 0) {
+            console.log(`⚠️ [${userId}] Nenhuma mensagem válida para processar`);
+            return;
+        }
+
+        const message = validMessages[0];
 
         console.log(`📋 [${userId}] Message object:`, JSON.stringify(message, null, 2));
-
-        if (!message.message) {
-            console.log(`⚠️ [${userId}] Mensagem ignorada: sem conteúdo`);
-            return;
-        }
-        if (message.key.remoteJid === 'status@broadcast') {
-            console.log(`⚠️ [${userId}] Mensagem ignorada: status broadcast`);
-            return;
-        }
 
         const chatId = message.key.remoteJid;
         const isGroup = chatId.endsWith('@g.us');
@@ -237,13 +247,29 @@ async function connectUserToWhatsApp(userId) {
         console.log(`📝 [${userId}] message.conversation:`, message.message.conversation);
         console.log(`📝 [${userId}] message.extendedTextMessage?.text:`, message.message.extendedTextMessage?.text);
 
-        const messageText = message.message.conversation ||
-                           message.message.extendedTextMessage?.text || '';
+        // Tentar extrair texto de diferentes tipos de mensagem
+        let messageText = '';
+        if (message.message.conversation) {
+            messageText = message.message.conversation;
+        } else if (message.message.extendedTextMessage?.text) {
+            messageText = message.message.extendedTextMessage.text;
+        } else if (message.message.imageMessage?.caption) {
+            messageText = message.message.imageMessage.caption;
+        } else if (message.message.videoMessage?.caption) {
+            messageText = message.message.videoMessage.caption;
+        }
 
         console.log(`✅ [${userId}] Texto final extraído: "${messageText}"`);
 
         if (!messageText) {
-            console.log(`⚠️ [${userId}] MENSAGEM SEM TEXTO! Tipo da mensagem:`, Object.keys(message.message));
+            console.log(`⚠️ [${userId}] MENSAGEM SEM TEXTO! Tipos disponíveis:`, Object.keys(message.message));
+            return;
+        }
+
+        // Filtrar mensagens muito antigas (mais de 1 hora)
+        const messageAge = Date.now() - (message.messageTimestamp * 1000);
+        if (messageAge > 3600000) { // 1 hora
+            console.log(`⏰ [${userId}] Mensagem muito antiga (${Math.round(messageAge/60000)} min), ignorando`);
             return;
         }
 
