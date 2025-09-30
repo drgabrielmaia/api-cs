@@ -4,6 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -11,9 +13,11 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@supabase/supabase-js": "^2.58.0",
     "@whiskeysockets/baileys": "^7.0.0-rc.3",
     "cors": "^2.8.5",
     "express": "^5.1.0",
+    "node-cron": "^4.2.1",
     "qrcode": "^1.5.4",
     "whatsapp-web.js": "^1.34.1"
   }

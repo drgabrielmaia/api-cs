@@ -2,6 +2,8 @@ const { Client } = require('whatsapp-web.js');
 const express = require('express');
 const cors = require('cors');
 const QRCode = require('qrcode');
+const cron = require('node-cron');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -13,6 +15,13 @@ let client;
 let qrCodeData = null;
 let isReady = false;
 let isConnecting = false;
+
+// Configuração do Supabase
+const supabaseUrl = 'https://udzmlnnztzzwrphhizol.supabase.co';
+const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVkem1sbm56dHp6d3JwaGhpem9sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc0MjkwNzYsImV4cCI6MjA3MzAwNTA3Nn0.KjihWHrNYxDO5ZZKpa8UYPAhw9HIU11yvAvvsNaiPZU';
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+const adminPhone = '5583996910414'; // Gabriel Maia
 
 function initializeClient() {
     client = new Client();
@@ -199,9 +208,203 @@ app.get('/', (req, res) => {
     }
 });
 
+// Função para buscar eventos do dia no Supabase
+async function getEventsForToday() {
+    try {
+        const today = new Date();
+        const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
+
+        const { data: events, error } = await supabase
+            .from('calendar_events')
+            .select(`
+                id,
+                title,
+                description,
+                start_datetime,
+                end_datetime,
+                mentorado_id,
+                mentorados (
+                    nome_completo,
+                    telefone
+                )
+            `)
+            .gte('start_datetime', todayStart.toISOString())
+            .lte('start_datetime', todayEnd.toISOString())
+            .order('start_datetime');
+
+        if (error) {
+            console.error('Erro ao buscar eventos:', error);
+            return [];
+        }
+
+        return events || [];
+    } catch (error) {
+        console.error('Erro na consulta de eventos:', error);
+        return [];
+    }
+}
+
+// Função para enviar mensagem via WhatsApp
+async function sendWhatsAppMessage(phoneNumber, message) {
+    if (!isReady) {
+        console.error('Cliente WhatsApp não está conectado');
+        return false;
+    }
+
+    try {
+        // Garantir que o número tenha o formato correto
+        let formattedNumber = phoneNumber.replace(/\D/g, '');
+        if (!formattedNumber.startsWith('55')) {
+            formattedNumber = '55' + formattedNumber;
+        }
+        formattedNumber += '@c.us';
+
+        await client.sendMessage(formattedNumber, message);
+        console.log(`✅ Mensagem enviada para ${phoneNumber}: ${message.substring(0, 50)}...`);
+        return true;
+    } catch (error) {
+        console.error(`❌ Erro ao enviar para ${phoneNumber}:`, error);
+        return false;
+    }
+}
+
+// Função principal para verificar e enviar notificações
+async function checkAndSendNotifications() {
+    console.log('🔄 Verificando eventos para notificações...');
+
+    if (!isReady) {
+        console.log('⚠️ WhatsApp não está conectado. Pulando verificação.');
+        return;
+    }
+
+    try {
+        const events = await getEventsForToday();
+        const now = new Date();
+        const currentHour = now.getHours();
+        const currentMinute = now.getMinutes();
+
+        let notificationsSent = 0;
+
+        // Verificar se é horário da notificação matinal (9h-9h05)
+        const isMorningTime = currentHour === 9 && currentMinute < 5;
+
+        for (const event of events) {
+            const eventStart = new Date(event.start_datetime);
+            const timeDiffMinutes = (eventStart - now) / (1000 * 60);
+
+            let shouldSendMorning = false;
+            let shouldSend30min = false;
+            let shouldSend1h = false;
+
+            // Verificar tipo de notificação
+            if (isMorningTime) {
+                shouldSendMorning = true;
+                console.log(`📅 Notificação matinal para evento: ${event.title}`);
+            } else if (timeDiffMinutes >= 25 && timeDiffMinutes <= 35) {
+                shouldSend30min = true;
+                console.log(`⏰ Notificação 30min antes: ${event.title}`);
+            } else if (timeDiffMinutes >= 55 && timeDiffMinutes <= 65) {
+                shouldSend1h = true;
+                console.log(`⏰ Notificação 1h antes: ${event.title}`);
+            } else {
+                continue; // Não é hora de notificar este evento
+            }
+
+            // Preparar mensagens
+            let message = '';
+            let targetPhone = '';
+
+            if (shouldSendMorning || shouldSend30min) {
+                // Para mentorado (se existir)
+                if (event.mentorado_id && event.mentorados && event.mentorados.telefone) {
+                    targetPhone = event.mentorados.telefone;
+
+                    if (shouldSendMorning) {
+                        message = `Bom dia, ${event.mentorados.nome_completo || 'amigo'}! ☀️\n\n` +
+                                `Daqui a pouco, às ${eventStart.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}, teremos nossa call para abrir um caminho de mais liberdade e resultados consistentes para você.\n\n` +
+                                `Esse é um espaço exclusivo para destravar pontos que hoje te prendem e já traçar passos claros rumo à transformação que você busca — tanto profissional quanto pessoal.`;
+                    } else {
+                        message = `Oi ${event.mentorados.nome_completo || 'amigo'}! Falta só meia hora para nossa call 🙌\n\n` +
+                                `Prepare um lugar tranquilo para que a gente possa mergulhar de verdade no seu cenário e já construir juntos os primeiros passos rumo à sua liberdade e transformação. 🚀`;
+                    }
+
+                    if (event.description) {
+                        message += `\n\nDescrição: ${event.description}`;
+                    }
+
+                    const sent = await sendWhatsAppMessage(targetPhone, message);
+                    if (sent) notificationsSent++;
+                }
+            }
+
+            if (shouldSend1h || !event.mentorado_id) {
+                // Para admin (Gabriel)
+                if (event.mentorado_id && event.mentorados) {
+                    message = `📅 Lembrete: Call com ${event.mentorados.nome_completo} hoje às ${eventStart.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}\n\nEvento: ${event.title}`;
+                } else {
+                    message = `📅 Lembrete do seu evento de hoje: ${event.title} - ${eventStart.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}`;
+                }
+
+                if (event.description) {
+                    message += `\n\nDescrição: ${event.description}`;
+                }
+
+                const sent = await sendWhatsAppMessage(adminPhone, message);
+                if (sent) notificationsSent++;
+            }
+        }
+
+        console.log(`✅ Verificação concluída. ${notificationsSent} notificações enviadas.`);
+
+    } catch (error) {
+        console.error('❌ Erro na verificação de notificações:', error);
+    }
+}
+
+// Configurar cron jobs
+function setupCronJobs() {
+    // Job principal: verificar a cada 2 minutos
+    cron.schedule('*/2 * * * *', () => {
+        checkAndSendNotifications();
+    });
+
+    // Job específico para 9h da manhã
+    cron.schedule('0 9 * * *', () => {
+        console.log('🌅 Executando job de notificações matinais...');
+        checkAndSendNotifications();
+    });
+
+    console.log('⏰ Cron jobs configurados:');
+    console.log('   - Verificação a cada 2 minutos');
+    console.log('   - Notificação matinal às 9h');
+}
+
+// Endpoint para testar notificações manualmente
+app.post('/test-notifications', async (req, res) => {
+    console.log('🧪 Testando sistema de notificações...');
+    await checkAndSendNotifications();
+    res.json({ success: true, message: 'Teste de notificações executado' });
+});
+
+// Endpoint para listar eventos de hoje
+app.get('/events/today', async (req, res) => {
+    try {
+        const events = await getEventsForToday();
+        res.json({ success: true, data: events });
+    } catch (error) {
+        res.json({ success: false, error: 'Erro ao buscar eventos' });
+    }
+});
+
 app.listen(port, () => {
     console.log(`🚀 WhatsApp API rodando em http://localhost:${port}`);
     console.log(`📱 Acesse http://localhost:${port} para ver o QR Code`);
 
     initializeClient();
+
+    // Configurar jobs após 5 segundos (dar tempo para o WhatsApp conectar)
+    setTimeout(() => {
+        setupCronJobs();
+    }, 5000);
 });
