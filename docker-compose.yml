@@ -17,8 +17,6 @@ services:
       - ./auth_info_baileys:/app/auth_info_baileys:rw
       # Optional: Mount logs directory
       - ./logs:/app/logs:rw
-    networks:
-      - whatsapp-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3001"]
       interval: 30s
@@ -26,32 +24,8 @@ services:
       retries: 3
       start_period: 40s
 
-  caddy:
-    image: caddy:latest
-    container_name: caddy-proxy
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - whatsapp-api
-    networks:
-      - whatsapp-network
-
-networks:
-  whatsapp-network:
-    driver: bridge
-
 volumes:
   whatsapp_auth:
     driver: local
   whatsapp_logs:
-    driver: local
-  caddy_data:
-    driver: local
-  caddy_config:
     driver: local
