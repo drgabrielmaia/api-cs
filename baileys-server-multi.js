@@ -69,6 +69,10 @@ function setSession(userId, session) {
     userSessions.set(userId, session);
 }
 
+function deleteSession(userId) {
+    userSessions.delete(userId);
+}
+
 // Persistence functions per user
 function saveUserData(session, filePath, data) {
     try {
