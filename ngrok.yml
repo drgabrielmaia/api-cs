@@ -5,5 +5,3 @@ tunnels:
     addr: whatsapp-api:3001
     proto: http
     schemes: [https]
-    inspect: false
-    bind_tls: true
