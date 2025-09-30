@@ -1,5 +1,5 @@
 version: "2"
-authtoken: # Adicione seu token do ngrok aqui
+authtoken: 33Q9EnctkDIM9npDZsKam8oJ3fX_4L7oTfoDHeh1P2VXyA5U5
 tunnels:
   whatsapp-api:
     addr: whatsapp-api:3001
