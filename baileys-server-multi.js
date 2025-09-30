@@ -313,13 +313,14 @@ async function connectUserToWhatsApp(userId) {
             message: messageObj
         });
 
-        if (!message.key.fromMe) {
-            const groupInfo = isGroup ? ` no grupo "${chatName}"` : '';
-            console.log(`📨 [${userId}] MENSAGEM RECEBIDA${groupInfo}: ${messageText}`);
+        // Log all messages
+        const groupInfo = isGroup ? ` no grupo "${chatName}"` : '';
+        const messageType = message.key.fromMe ? "ENVIADA" : "RECEBIDA";
+        console.log(`📨 [${userId}] MENSAGEM ${messageType}${groupInfo}: ${messageText}`);
 
-            // Automação Bereanos
-            console.log(`🔍 [${userId}] Verificando mensagem: "${messageText}"`);
-            if (messageText.toLowerCase().includes('bereanos')) {
+        // Automação Bereanos (funciona para qualquer mensagem)
+        console.log(`🔍 [${userId}] Verificando mensagem: "${messageText}"`);
+        if (messageText.toLowerCase().includes('bereanos')) {
                 console.log(`🎯 [${userId}] TRIGGER DETECTADO! Enviando Palavra Bereanos...`);
                 try {
                     const fs = require('fs');
@@ -346,16 +347,15 @@ async function connectUserToWhatsApp(userId) {
                     console.error(`❌ [${userId}] Erro ao enviar Palavra Bereanos:`, error);
                     console.error(`❌ [${userId}] Stack trace:`, error.stack);
                 }
-            }
+        }
 
-            // Manter ping/pong para testes
-            if (messageText.toLowerCase().includes('ping')) {
-                try {
-                    await session.sock.sendMessage(message.key.remoteJid, { text: 'pong' });
-                    console.log(`✅ [${userId}] Pong enviado!`);
-                } catch (error) {
-                    console.error(`❌ [${userId}] Erro ao enviar pong:`, error);
-                }
+        // Manter ping/pong para testes
+        if (messageText.toLowerCase().includes('ping')) {
+            try {
+                await session.sock.sendMessage(message.key.remoteJid, { text: 'pong' });
+                console.log(`✅ [${userId}] Pong enviado!`);
+            } catch (error) {
+                console.error(`❌ [${userId}] Erro ao enviar pong:`, error);
             }
         }
     });
