@@ -14,7 +14,7 @@ process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = 0;
 const app = express();
 const port = process.env.PORT || 3001;
 
-app.use(cors());
+// app.use(cors()); // Comentado - nginx gerencia CORS
 app.use(express.json());
 
 let client;

@@ -26,31 +26,21 @@ services:
       retries: 3
       start_period: 40s
 
-  ngrok:
-    image: ngrok/ngrok:latest
-    container_name: ngrok-tunnel
+  caddy:
+    image: caddy:latest
+    container_name: caddy-proxy
     restart: unless-stopped
-    command:
-      - "start"
-      - "--all"
-      - "--config"
-      - "/etc/ngrok.yml"
-    volumes:
-      - ./ngrok.yml:/etc/ngrok.yml
     ports:
-      - "4040:4040"  # ngrok web interface
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
     depends_on:
       - whatsapp-api
     networks:
       - whatsapp-network
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 4G
-        reservations:
-          cpus: '0.5'
-          memory: 1G
 
 networks:
   whatsapp-network:
@@ -60,4 +50,8 @@ volumes:
   whatsapp_auth:
     driver: local
   whatsapp_logs:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
     driver: local

@@ -11,7 +11,7 @@ const { createClient } = require('@supabase/supabase-js');
 const app = express();
 const port = process.env.PORT || 3001;
 
-app.use(cors());
+// app.use(cors()); // Comentado - nginx gerencia CORS
 app.use(express.json());
 
 // Multi-user WhatsApp sessions storage
@@ -502,8 +502,8 @@ app.get('/users/:userId/events', (req, res) => {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Cache-Control'
+        // 'Access-Control-Allow-Origin': '*', // Comentado - nginx gerencia CORS
+        // 'Access-Control-Allow-Headers': 'Cache-Control' // Comentado - nginx gerencia CORS
     });
 
     addSSEClient(userId, res);

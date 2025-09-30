@@ -9,7 +9,7 @@ const path = require('path');
 const app = express();
 const port = process.env.PORT || 3001;
 
-app.use(cors());
+// app.use(cors()); // Comentado - nginx gerencia CORS
 app.use(express.json());
 
 let sock;
@@ -572,8 +572,8 @@ app.get('/events', (req, res) => {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Cache-Control'
+        // 'Access-Control-Allow-Origin': '*', // Comentado - nginx gerencia CORS
+        // 'Access-Control-Allow-Headers': 'Cache-Control' // Comentado - nginx gerencia CORS
     });
 
     // Adicionar cliente à lista

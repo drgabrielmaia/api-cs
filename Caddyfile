@@ -1,0 +1,12 @@
+# Substitua por seu domínio quando comprar
+# api.seudominio.com {
+#     reverse_proxy whatsapp-api:3001
+# }
+
+# Configuração temporária para IP (remova quando tiver domínio)
+:80 {
+    reverse_proxy whatsapp-api:3001
+}
+
+# Quando você comprar o domínio, descomente a configuração acima
+# e comente esta configuração temporária
