@@ -317,6 +317,30 @@ async function connectUserToWhatsApp(userId) {
             const groupInfo = isGroup ? ` no grupo "${chatName}"` : '';
             console.log(`📨 [${userId}] MENSAGEM RECEBIDA${groupInfo}: ${messageText}`);
 
+            // Automação Palavra Bereanos
+            if (messageText.toLowerCase().includes('palavra bereanos')) {
+                try {
+                    const fs = require('fs');
+                    const path = require('path');
+
+                    // Carregar palavras
+                    const palavrasPath = path.join(__dirname, 'palavra-bereanos.json');
+                    const palavras = JSON.parse(fs.readFileSync(palavrasPath, 'utf8'));
+
+                    // Escolher palavra aleatória
+                    const palavraAleatoria = palavras[Math.floor(Math.random() * palavras.length)];
+
+                    // Formatar mensagem
+                    const mensagemCompleta = `🙏 *${palavraAleatoria.titulo}*\n\n📖 *${palavraAleatoria.versiculo}*\n\n💭 ${palavraAleatoria.mensagem}\n\n🙌 *Oração:*\n${palavraAleatoria.oracao}\n\n✝️ _Palavra Bereanos_`;
+
+                    await session.sock.sendMessage(message.key.remoteJid, { text: mensagemCompleta });
+                    console.log(`✅ [${userId}] Palavra Bereanos enviada: ${palavraAleatoria.titulo}`);
+                } catch (error) {
+                    console.error(`❌ [${userId}] Erro ao enviar Palavra Bereanos:`, error);
+                }
+            }
+
+            // Manter ping/pong para testes
             if (messageText.toLowerCase().includes('ping')) {
                 try {
                     await session.sock.sendMessage(message.key.remoteJid, { text: 'pong' });
