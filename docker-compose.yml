@@ -25,6 +25,24 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: ngrok-tunnel
+    restart: unless-stopped
+    command:
+      - "start"
+      - "--all"
+      - "--config"
+      - "/etc/ngrok.yml"
+    volumes:
+      - ./ngrok.yml:/etc/ngrok.yml
+    ports:
+      - "4040:4040"  # ngrok web interface
+    depends_on:
+      - whatsapp-api
+    networks:
+      - whatsapp-network
     deploy:
       resources:
         limits:
