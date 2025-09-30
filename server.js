@@ -403,31 +403,15 @@ app.get('/events/today', async (req, res) => {
     }
 });
 
-// FORÇAR HTTPS SEMPRE - SEM OPÇÕES
-console.log('🔒 Iniciando servidor HTTPS obrigatório...');
+// SERVIDOR HTTP SIMPLES
+app.listen(port, () => {
+    console.log(`🚀 WhatsApp API rodando em HTTP na porta ${port}`);
+    console.log(`🌐 URL: http://217.196.60.199:${port}`);
 
-try {
-    const sslOptions = {
-        key: fs.readFileSync(path.join(__dirname, 'ssl', 'key.pem')),
-        cert: fs.readFileSync(path.join(__dirname, 'ssl', 'cert.pem'))
-    };
+    initializeClient();
 
-    https.createServer(sslOptions, app).listen(port, () => {
-        console.log(`🚀 WhatsApp API rodando em HTTPS na porta ${port}`);
-        console.log(`🔒 URL: https://217.196.60.199:${port}`);
-        console.log(`📱 Certificado SSL carregado com sucesso!`);
-
-        initializeClient();
-
-        // Configurar jobs após 5 segundos
-        setTimeout(() => {
-            setupCronJobs();
-        }, 5000);
-    });
-} catch (error) {
-    console.error('❌ ERRO FATAL: Certificados SSL não encontrados!');
-    console.error('❌ Execute: ./generate-ssl.sh primeiro');
-    console.error('❌ Erro:', error.message);
-    console.error('❌ Caminho esperado: ' + path.join(__dirname, 'ssl'));
-    process.exit(1);
+    // Configurar jobs após 5 segundos
+    setTimeout(() => {
+        setupCronJobs();
+    }, 5000);
 });
