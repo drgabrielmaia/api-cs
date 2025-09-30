@@ -403,42 +403,31 @@ app.get('/events/today', async (req, res) => {
     }
 });
 
-// Configuração HTTPS
-const useHTTPS = process.env.USE_HTTPS === 'true';
-console.log('🔍 USE_HTTPS environment:', process.env.USE_HTTPS);
-console.log('🔍 useHTTPS boolean:', useHTTPS);
+// FORÇAR HTTPS SEMPRE - SEM OPÇÕES
+console.log('🔒 Iniciando servidor HTTPS obrigatório...');
 
-if (useHTTPS) {
-    try {
-        const sslOptions = {
-            key: fs.readFileSync(path.join(__dirname, 'ssl', 'key.pem')),
-            cert: fs.readFileSync(path.join(__dirname, 'ssl', 'cert.pem'))
-        };
+try {
+    const sslOptions = {
+        key: fs.readFileSync(path.join(__dirname, 'ssl', 'key.pem')),
+        cert: fs.readFileSync(path.join(__dirname, 'ssl', 'cert.pem'))
+    };
 
-        https.createServer(sslOptions, app).listen(port, () => {
-            console.log(`🚀 WhatsApp API rodando em https://localhost:${port}`);
-            console.log(`📱 Acesse https://localhost:${port} para ver o QR Code`);
-            initializeClient();
-        });
-    } catch (error) {
-        console.error('❌ Erro ao carregar certificados SSL:', error.message);
-        console.log('🔄 Iniciando em modo HTTP...');
+    https.createServer(sslOptions, app).listen(port, () => {
+        console.log(`🚀 WhatsApp API rodando em HTTPS na porta ${port}`);
+        console.log(`🔒 URL: https://217.196.60.199:${port}`);
+        console.log(`📱 Certificado SSL carregado com sucesso!`);
 
-        app.listen(port, () => {
-            console.log(`🚀 WhatsApp API rodando em http://localhost:${port}`);
-            console.log(`📱 Acesse http://localhost:${port} para ver o QR Code`);
-            initializeClient();
-        });
-    }
-} else {
-    app.listen(port, () => {
-        console.log(`🚀 WhatsApp API rodando em http://localhost:${port}`);
-        console.log(`📱 Acesse http://localhost:${port} para ver o QR Code`);
         initializeClient();
-    });
 
-    // Configurar jobs após 5 segundos (dar tempo para o WhatsApp conectar)
-    setTimeout(() => {
-        setupCronJobs();
-    }, 5000);
+        // Configurar jobs após 5 segundos
+        setTimeout(() => {
+            setupCronJobs();
+        }, 5000);
+    });
+} catch (error) {
+    console.error('❌ ERRO FATAL: Certificados SSL não encontrados!');
+    console.error('❌ Execute: ./generate-ssl.sh primeiro');
+    console.error('❌ Erro:', error.message);
+    console.error('❌ Caminho esperado: ' + path.join(__dirname, 'ssl'));
+    process.exit(1);
 });
