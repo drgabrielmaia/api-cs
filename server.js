@@ -4,6 +4,9 @@ const cors = require('cors');
 const QRCode = require('qrcode');
 const cron = require('node-cron');
 const { createClient } = require('@supabase/supabase-js');
+const https = require('https');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -397,11 +400,37 @@ app.get('/events/today', async (req, res) => {
     }
 });
 
-app.listen(port, () => {
-    console.log(`🚀 WhatsApp API rodando em http://localhost:${port}`);
-    console.log(`📱 Acesse http://localhost:${port} para ver o QR Code`);
+// Configuração HTTPS
+const useHTTPS = process.env.USE_HTTPS === 'true';
 
-    initializeClient();
+if (useHTTPS) {
+    try {
+        const sslOptions = {
+            key: fs.readFileSync(path.join(__dirname, 'ssl', 'key.pem')),
+            cert: fs.readFileSync(path.join(__dirname, 'ssl', 'cert.pem'))
+        };
+
+        https.createServer(sslOptions, app).listen(port, () => {
+            console.log(`🚀 WhatsApp API rodando em https://localhost:${port}`);
+            console.log(`📱 Acesse https://localhost:${port} para ver o QR Code`);
+            initializeClient();
+        });
+    } catch (error) {
+        console.error('❌ Erro ao carregar certificados SSL:', error.message);
+        console.log('🔄 Iniciando em modo HTTP...');
+
+        app.listen(port, () => {
+            console.log(`🚀 WhatsApp API rodando em http://localhost:${port}`);
+            console.log(`📱 Acesse http://localhost:${port} para ver o QR Code`);
+            initializeClient();
+        });
+    }
+} else {
+    app.listen(port, () => {
+        console.log(`🚀 WhatsApp API rodando em http://localhost:${port}`);
+        console.log(`📱 Acesse http://localhost:${port} para ver o QR Code`);
+        initializeClient();
+    });
 
     // Configurar jobs após 5 segundos (dar tempo para o WhatsApp conectar)
     setTimeout(() => {

@@ -12,15 +12,18 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3001
+      - USE_HTTPS=true
     volumes:
       # Persist WhatsApp auth data between container restarts
       - ./auth_info_baileys:/app/auth_info_baileys:rw
       # Optional: Mount logs directory
       - ./logs:/app/logs:rw
+      # SSL certificates for HTTPS
+      - ./ssl:/app/ssl:ro
     networks:
       - whatsapp-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:3001/health"]
       interval: 30s
       timeout: 10s
       retries: 3
