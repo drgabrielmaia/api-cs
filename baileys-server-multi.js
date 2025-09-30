@@ -214,15 +214,38 @@ async function connectUserToWhatsApp(userId) {
     session.sock.ev.on('creds.update', saveCreds);
 
     session.sock.ev.on('messages.upsert', async ({ messages }) => {
+        console.log(`🔥 [${userId}] EVENTO MESSAGES.UPSERT RECEBIDO!`);
+        console.log(`📊 [${userId}] Número de mensagens:`, messages.length);
+
         const message = messages[0];
 
-        if (!message.message) return;
-        if (message.key.remoteJid === 'status@broadcast') return;
+        console.log(`📋 [${userId}] Message object:`, JSON.stringify(message, null, 2));
+
+        if (!message.message) {
+            console.log(`⚠️ [${userId}] Mensagem ignorada: sem conteúdo`);
+            return;
+        }
+        if (message.key.remoteJid === 'status@broadcast') {
+            console.log(`⚠️ [${userId}] Mensagem ignorada: status broadcast`);
+            return;
+        }
 
         const chatId = message.key.remoteJid;
         const isGroup = chatId.endsWith('@g.us');
+
+        console.log(`🔍 [${userId}] Extraindo texto da mensagem...`);
+        console.log(`📝 [${userId}] message.conversation:`, message.message.conversation);
+        console.log(`📝 [${userId}] message.extendedTextMessage?.text:`, message.message.extendedTextMessage?.text);
+
         const messageText = message.message.conversation ||
                            message.message.extendedTextMessage?.text || '';
+
+        console.log(`✅ [${userId}] Texto final extraído: "${messageText}"`);
+
+        if (!messageText) {
+            console.log(`⚠️ [${userId}] MENSAGEM SEM TEXTO! Tipo da mensagem:`, Object.keys(message.message));
+            return;
+        }
 
         let chatName = message.pushName || chatId;
         if (isGroup) {
