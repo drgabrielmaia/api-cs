@@ -8,6 +8,9 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
+// Para desenvolvimento - aceitar certificados self-signed
+process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = 0;
+
 const app = express();
 const port = process.env.PORT || 3001;
 
@@ -402,6 +405,8 @@ app.get('/events/today', async (req, res) => {
 
 // Configuração HTTPS
 const useHTTPS = process.env.USE_HTTPS === 'true';
+console.log('🔍 USE_HTTPS environment:', process.env.USE_HTTPS);
+console.log('🔍 useHTTPS boolean:', useHTTPS);
 
 if (useHTTPS) {
     try {
