@@ -909,6 +909,45 @@ app.get('/users/:userId/messages/:chatId', (req, res) => {
     });
 });
 
+// Reset user session (clear corrupted data)
+app.delete('/users/:userId/reset', async (req, res) => {
+    const { userId } = req.params;
+
+    try {
+        console.log(`🔄 [${userId}] Resetando sessão...`);
+
+        // Stop existing session
+        const existingSession = getSession(userId);
+        if (existingSession && existingSession.sock) {
+            existingSession.sock.end();
+        }
+
+        // Remove from memory
+        deleteSession(userId);
+
+        // Clean auth files
+        const authDir = path.join(__dirname, 'auth_info_baileys', `user_${userId}`);
+        if (fs.existsSync(authDir)) {
+            fs.rmSync(authDir, { recursive: true, force: true });
+            console.log(`🧹 [${userId}] Arquivos de autenticação removidos`);
+        }
+
+        console.log(`✅ [${userId}] Sessão resetada com sucesso`);
+        res.json({
+            success: true,
+            message: 'Sessão resetada. Registre novamente para obter novo QR Code.',
+            userId: userId
+        });
+
+    } catch (error) {
+        console.error(`❌ [${userId}] Erro ao resetar sessão:`, error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 // List all registered users
 app.get('/users', async (req, res) => {
     const users = await Promise.all(Array.from(userSessions.keys()).map(async userId => {
