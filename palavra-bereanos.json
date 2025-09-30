@@ -88,5 +88,413 @@
     "versiculo": "2 Coríntios 12:9",
     "mensagem": "O poder de Deus se aperfeiçoa justamente na fraqueza humana. Ele nos completa.",
     "oracao": "Jesus, que Tua graça me sustente onde eu não consigo ir sozinho."
+  },
+  {
+    "titulo": "Deus Age no Silêncio",
+    "versiculo": "Salmos 37:7",
+    "mensagem": "Mesmo quando não vemos nada acontecendo, Deus está trabalhando em nosso favor nos bastidores.",
+    "oracao": "Senhor, me ajuda a confiar no Teu tempo e no Teu silêncio."
+  },
+  {
+    "titulo": "A Porta que Deus Abre",
+    "versiculo": "Apocalipse 3:8",
+    "mensagem": "Quando Deus abre uma porta, ninguém pode fechar. E quando Ele fecha, é proteção.",
+    "oracao": "Pai, me ajuda a aceitar as Tuas portas abertas e fechadas."
+  },
+  {
+    "titulo": "Viva Sem Ansiedade",
+    "versiculo": "1 Pedro 5:7",
+    "mensagem": "Lançar a ansiedade sobre Deus é reconhecer que Ele cuida de cada detalhe da nossa vida.",
+    "oracao": "Entrego minhas preocupações nas Tuas mãos, Senhor."
+  },
+  {
+    "titulo": "Escolhido por Deus",
+    "versiculo": "Jeremias 1:5",
+    "mensagem": "Antes mesmo de nascermos, Deus já tinha planos específicos para nós.",
+    "oracao": "Deus, me ajuda a caminhar no propósito que Tu preparaste pra mim."
+  },
+  {
+    "titulo": "A Alegria que Vem do Senhor",
+    "versiculo": "Neemias 8:10",
+    "mensagem": "A verdadeira alegria não depende de situações, mas da presença de Deus em nós.",
+    "oracao": "Que a Tua alegria seja a minha força hoje, Senhor."
+  },
+  {
+    "titulo": "Gratidão em Todo Tempo",
+    "versiculo": "1 Tessalonicenses 5:18",
+    "mensagem": "A gratidão abre nossos olhos para o que Deus já fez, mesmo quando pedimos por mais.",
+    "oracao": "Obrigado, Deus, por tudo que já fizeste e ainda farás."
+  },
+  {
+    "titulo": "O Pastor Que Cuida",
+    "versiculo": "Salmos 23:1",
+    "mensagem": "Quando o Senhor é nosso pastor, nada essencial nos falta.",
+    "oracao": "Jesus, guia meus passos como o Bom Pastor que Tu és."
+  },
+  {
+    "titulo": "Esperar com Confiança",
+    "versiculo": "Isaías 40:31",
+    "mensagem": "Quem espera no Senhor recebe novas forças e não caminha sozinho.",
+    "oracao": "Senhor, renova minhas forças enquanto espero em Ti."
+  },
+  {
+    "titulo": "A Verdade Liberta",
+    "versiculo": "João 8:32",
+    "mensagem": "A liberdade verdadeira vem do conhecimento e prática da Palavra de Deus.",
+    "oracao": "Jesus, que Tua verdade liberte minha mente e meu coração."
+  },
+  {
+    "titulo": "O Deus Que Sustenta",
+    "versiculo": "Salmos 55:22",
+    "mensagem": "Deus não nos deixa afundar quando lançamos sobre Ele nossos fardos.",
+    "oracao": "Pai, receba meu peso e me sustente hoje."
+  },
+  {
+    "titulo": "Luz nas Trevas",
+    "versiculo": "Salmos 119:105",
+    "mensagem": "A Palavra de Deus é direção segura quando tudo ao redor parece confuso.",
+    "oracao": "Senhor, ilumina meu caminho com Tua verdade."
+  },
+  {
+    "titulo": "Nunca é Tarde",
+    "versiculo": "João 11:25",
+    "mensagem": "Mesmo quando tudo parece perdido, Jesus ainda pode ressuscitar o impossível.",
+    "oracao": "Jesus, renova minha esperança no que já desisti."
+  },
+  {
+    "titulo": "Caminhos Mais Altos",
+    "versiculo": "Isaías 55:8-9",
+    "mensagem": "Os pensamentos de Deus são mais altos que os nossos — e isso é segurança, não ameaça.",
+    "oracao": "Ajuda-me a confiar na Tua sabedoria acima da minha."
+  },
+  {
+    "titulo": "Acalme o Coração",
+    "versiculo": "Salmos 34:4",
+    "mensagem": "Deus ouve quem clama e livra de todo medo.",
+    "oracao": "Senhor, acalma minha alma e tira o medo que me prende."
+  },
+  {
+    "titulo": "Força na Fraqueza",
+    "versiculo": "Isaías 40:29",
+    "mensagem": "Deus fortalece o cansado e dá poder ao fraco. Ele não exige perfeição, mas entrega.",
+    "oracao": "Pai, onde minhas forças acabam, que as Tuas comecem."
+  },
+  {
+    "titulo": "Perdão que Liberta",
+    "versiculo": "1 João 1:9",
+    "mensagem": "Confessar não é sinal de vergonha, mas de cura e restauração.",
+    "oracao": "Jesus, limpa meu coração e renova minha identidade em Ti."
+  },
+  {
+    "titulo": "A Vitória Vem do Senhor",
+    "versiculo": "Provérbios 21:31",
+    "mensagem": "Nos preparamos, mas a vitória vem das mãos de Deus. Não é na nossa força.",
+    "oracao": "Senhor, conduza minhas batalhas e me dá descanso na Tua vontade."
+  },
+  {
+    "titulo": "No Tempo Certo",
+    "versiculo": "Eclesiastes 3:1",
+    "mensagem": "Existe um tempo perfeito para cada propósito de Deus. Nada é por acaso.",
+    "oracao": "Ajuda-me a esperar com fé e não com ansiedade."
+  },
+  {
+    "titulo": "Guia e Protetor",
+    "versiculo": "Salmos 32:8",
+    "mensagem": "Deus promete nos instruir, ensinar o caminho e nos aconselhar com amor.",
+    "oracao": "Senhor, dirige meus passos e me guarda do erro."
+  },
+  {
+    "titulo": "Aquele que Cuida",
+    "versiculo": "Mateus 10:30",
+    "mensagem": "Se Deus conta até os fios do nosso cabelo, nenhum detalhe passa despercebido.",
+    "oracao": "Pai, me lembra que estou totalmente nos Teus cuidados."
+  },
+  {
+    "titulo": "Quando a Ansiedade Aumenta",
+    "versiculo": "Salmos 94:19",
+    "mensagem": "Deus consola a alma mesmo quando os pensamentos ansiosos se multiplicam.",
+    "oracao": "Senhor, acalma minha mente e substitui a ansiedade pela Tua paz."
+  },
+  {
+    "titulo": "Não Ande Ansioso",
+    "versiculo": "Filipenses 4:6",
+    "mensagem": "A resposta para a ansiedade é a oração acompanhada de gratidão.",
+    "oracao": "Pai, entrego minhas preocupações e confio no Teu cuidado."
+  },
+  {
+    "titulo": "Descanso para a Alma",
+    "versiculo": "Mateus 11:28",
+    "mensagem": "Jesus oferece descanso verdadeiro para os que estão cansados e sobrecarregados.",
+    "oracao": "Jesus, recebo Teu alívio e descanso hoje."
+  },
+  {
+    "titulo": "Lançando a Ansiedade",
+    "versiculo": "1 Pedro 5:7",
+    "mensagem": "Deus se importa com cada detalhe, inclusive aquilo que nos aflige.",
+    "oracao": "Senhor, tomo a decisão de lançar sobre Ti toda preocupação."
+  },
+  {
+    "titulo": "Paz que Excede o Entendimento",
+    "versiculo": "Filipenses 4:7",
+    "mensagem": "A paz de Deus protege o coração mesmo em meio ao caos.",
+    "oracao": "Pai, guarda minha mente com Tua paz verdadeira."
+  },
+  {
+    "titulo": "Confiar no Silêncio",
+    "versiculo": "Isaías 30:15",
+    "mensagem": "Em descanso e confiança encontramos força, mesmo sem respostas imediatas.",
+    "oracao": "Deus, ensina meu coração a descansar em Ti."
+  },
+  {
+    "titulo": "Ele Cuida dos Detalhes",
+    "versiculo": "Mateus 6:26",
+    "mensagem": "Se Deus alimenta os pássaros, certamente cuidará de nós.",
+    "oracao": "Senhor, ajuda-me a confiar que nada passa despercebido aos Teus olhos."
+  },
+  {
+    "titulo": "Ansiedade Não Define o Futuro",
+    "versiculo": "Mateus 6:34",
+    "mensagem": "Cada dia tem seu próprio desafio; não precisamos viver o amanhã antes do tempo.",
+    "oracao": "Pai, ensina-me a viver um dia de cada vez na Tua graça."
+  },
+  {
+    "titulo": "O Senhor Sustenta",
+    "versiculo": "Salmos 55:22",
+    "mensagem": "Entregar o fardo a Deus é confiar que Ele nos sustenta.",
+    "oracao": "Jesus, carrega o peso que eu não consigo mais levar."
+  },
+  {
+    "titulo": "Calma em Meio à Tempestade",
+    "versiculo": "Marcos 4:39",
+    "mensagem": "Quando Jesus fala à tempestade, até o vento obedece.",
+    "oracao": "Senhor, fala à tempestade dentro de mim."
+  },
+  {
+    "titulo": "O Medo Não Tem a Última Palavra",
+    "versiculo": "2 Timóteo 1:7",
+    "mensagem": "Deus não nos deu espírito de medo, mas de poder, amor e equilíbrio.",
+    "oracao": "Pai, substitui meu medo pela Tua coragem."
+  },
+  {
+    "titulo": "Não Temas, Eu Sou Contigo",
+    "versiculo": "Isaías 41:10",
+    "mensagem": "O medo perde a força quando lembramos quem está conosco.",
+    "oracao": "Senhor, me fortalece e me segura pela mão."
+  },
+  {
+    "titulo": "O Senhor é a Minha Luz",
+    "versiculo": "Salmos 27:1",
+    "mensagem": "Com Deus como luz e salvação, o medo perde lugar.",
+    "oracao": "Jesus, ilumina qualquer escuridão que cause temor em mim."
+  },
+  {
+    "titulo": "Perfeita Paz",
+    "versiculo": "Isaías 26:3",
+    "mensagem": "A mente firme em Deus vive em paz mesmo diante do medo.",
+    "oracao": "Guarda minha mente em Ti, Senhor."
+  },
+  {
+    "titulo": "O Amor Lança Fora o Medo",
+    "versiculo": "1 João 4:18",
+    "mensagem": "O amor de Deus desfaz o medo, porque nos torna seguros.",
+    "oracao": "Pai, envolve-me com Teu amor e remove o temor."
+  },
+  {
+    "titulo": "Força em Tempos de Medo",
+    "versiculo": "Salmos 56:3",
+    "mensagem": "Confiar em Deus é o antídoto contra o medo.",
+    "oracao": "Quando eu temer, Senhor, lembra-me de confiar em Ti."
+  },
+  {
+    "titulo": "Vales Não São Finais",
+    "versiculo": "Salmos 23:4",
+    "mensagem": "Mesmo no vale da sombra da morte, Deus caminha ao nosso lado.",
+    "oracao": "Senhor, que Tua presença afaste todo temor."
+  },
+  {
+    "titulo": "Coragem em Cristo",
+    "versiculo": "Josué 1:9",
+    "mensagem": "A coragem vem quando sabemos que Deus nos acompanha.",
+    "oracao": "Deus, fortalece-me para avançar sem medo."
+  },
+  {
+    "titulo": "Confiança em Tempos de Incerteza",
+    "versiculo": "Provérbios 3:5",
+    "mensagem": "Nem sempre entender é necessário para confiar.",
+    "oracao": "Pai, ajuda-me a depender mais de Ti do que do meu controle."
+  },
+  {
+    "titulo": "Esperança para o Cansado",
+    "versiculo": "Isaías 40:29",
+    "mensagem": "Quando faltam forças, Deus renova e sustenta.",
+    "oracao": "Senhor, renova minhas forças e acalma meu coração."
+  },
+  {
+    "titulo": "Cura que Vem do Alto",
+    "versiculo": "Jeremias 17:14",
+    "mensagem": "Só Deus cura de verdade a alma e o corpo.",
+    "oracao": "Cura-me, Senhor, em todas as áreas da minha vida."
+  },
+  {
+    "titulo": "O Médico das Almas",
+    "versiculo": "Salmos 147:3",
+    "mensagem": "Deus cura os quebrantados e restaura corações feridos.",
+    "oracao": "Jesus, trata as feridas que ninguém vê."
+  },
+  {
+    "titulo": "Clame por Cura",
+    "versiculo": "Salmos 30:2",
+    "mensagem": "Quando clamamos, Deus responde com cura e restauração.",
+    "oracao": "Senhor, escuta meu clamor e traz alívio."
+  },
+  {
+    "titulo": "Feridas que Deus Sara",
+    "versiculo": "Isaías 53:5",
+    "mensagem": "Jesus carregou nossas dores e enfermidades na cruz.",
+    "oracao": "Jesus, aplica Tua cura sobre corpo, alma e mente."
+  },
+  {
+    "titulo": "Restauração Completa",
+    "versiculo": "Jeremias 30:17",
+    "mensagem": "Mesmo o que parece irreversível, Deus pode restaurar.",
+    "oracao": "Senhor, restitui aquilo que foi perdido em mim."
+  },
+  {
+    "titulo": "Cura Interior",
+    "versiculo": "Salmos 34:18",
+    "mensagem": "Deus está perto dos quebrantados e restaura a alma.",
+    "oracao": "Pai, cura minhas dores internas com Tua presença."
+  },
+  {
+    "titulo": "A Fé que Cura",
+    "versiculo": "Marcos 5:34",
+    "mensagem": "A fé move o coração de Deus e abre portas para a cura.",
+    "oracao": "Jesus, aumenta minha fé enquanto espero Tua intervenção."
+  },
+  {
+    "titulo": "Descanso para o Doente",
+    "versiculo": "Salmos 41:3",
+    "mensagem": "Deus sustenta até no leito de dor e traz consolo.",
+    "oracao": "Senhor, visita-me com Teu consolo e cura."
+  },
+  {
+    "titulo": "Ele Sara as Feridas",
+    "versiculo": "Oséias 6:1",
+    "mensagem": "Mesmo feridos, podemos voltar a Deus e ser restaurados.",
+    "oracao": "Pai, sara minhas dores e fortalece o que está fraco."
+  },
+  {
+    "titulo": "Cura e Vida",
+    "versiculo": "Provérbios 4:22",
+    "mensagem": "A Palavra de Deus é remédio para a alma e o corpo.",
+    "oracao": "Senhor, que Tua Palavra cure o que não consigo tocar."
+  },
+  {
+    "titulo": "Esperança de Restauração",
+    "versiculo": "Salmos 30:11",
+    "mensagem": "Deus transforma lamento em alegria e veste de cura.",
+    "oracao": "Senhor, muda meu choro em um novo cântico."
+  },
+  {
+    "titulo": "Ele Não Esqueceu de Você",
+    "versiculo": "Isaías 49:15",
+    "mensagem": "Mesmo que tudo pareça silencioso, Deus não abandona.",
+    "oracao": "Senhor, conforta meu coração com Tua presença fiel."
+  },
+  {
+    "titulo": "Mesmo Ferido, Ainda Há Esperança",
+    "versiculo": "Salmos 147:3",
+    "mensagem": "As feridas não são o fim quando Deus está no processo de cura.",
+    "oracao": "Jesus, toca nas partes mais profundas e traz restauração."
+  },
+  {
+    "titulo": "Ele Sustenta Até no Medo",
+    "versiculo": "Salmos 118:6",
+    "mensagem": "Se o Senhor está conosco, nada pode nos dominar.",
+    "oracao": "Senhor, afasta o medo que tenta me paralisar."
+  },
+  {
+    "titulo": "Corajosos em Cristo",
+    "versiculo": "João 14:27",
+    "mensagem": "A paz de Jesus substitui o medo, não apenas o ameniza.",
+    "oracao": "Jesus, enche meu coração com Tua paz real."
+  },
+  {
+    "titulo": "Ele Enxuga as Lágrimas",
+    "versiculo": "Apocalipse 21:4",
+    "mensagem": "As dores e medos não são eternos; Deus prometeu um fim para eles.",
+    "oracao": "Senhor, consola meu coração com Tuas promessas."
+  },
+  {
+    "titulo": "Sou Com Você",
+    "versiculo": "Josué 1:5",
+    "mensagem": "A presença de Deus garante coragem diante das ameaças.",
+    "oracao": "Deus, me lembra que não caminho sozinho."
+  },
+  {
+    "titulo": "Protegidos pelo Altíssimo",
+    "versiculo": "Salmos 91:1",
+    "mensagem": "Habitar em Deus é encontrar refúgio e segurança.",
+    "oracao": "Senhor, me esconde em Tua presença."
+  },
+  {
+    "titulo": "Acalma o Coração",
+    "versiculo": "João 14:1",
+    "mensagem": "Não se turbar é confiar profundamente em Deus.",
+    "oracao": "Senhor, aquieta as tempestades dentro de mim."
+  },
+  {
+    "titulo": "Ele Não Falha",
+    "versiculo": "Salmos 56:4",
+    "mensagem": "Quando confiamos em Deus, o medo perde a força.",
+    "oracao": "Pai, fortalece minha confiança em Ti."
+  },
+  {
+    "titulo": "Seguro nos Braços de Deus",
+    "versiculo": "Deuteronômio 31:6",
+    "mensagem": "Deus não abandona nem desampara, mesmo quando temos medo.",
+    "oracao": "Senhor, me sustenta com Tua fidelidade."
+  },
+  {
+    "titulo": "O Socorro Vem do Senhor",
+    "versiculo": "Salmos 121:2",
+    "mensagem": "A ajuda para o medo e a ansiedade não vem de dentro, mas do Alto.",
+    "oracao": "Deus, levanto meus olhos a Ti em busca de socorro."
+  },
+  {
+    "titulo": "Livres do Temor",
+    "versiculo": "Salmos 34:4",
+    "mensagem": "Quem busca ao Senhor encontra libertação do medo.",
+    "oracao": "Senhor, responde meu clamor e afasta meu temor."
+  },
+  {
+    "titulo": "A Fé Vence o Medo",
+    "versiculo": "Marcos 5:36",
+    "mensagem": "Crer em Jesus é a chave para silenciar o medo.",
+    "oracao": "Jesus, fortalece minha fé diante das incertezas."
+  },
+  {
+    "titulo": "O Senhor Peleja por Você",
+    "versiculo": "Êxodo 14:14",
+    "mensagem": "Deus luta por nós mesmo quando estamos com medo.",
+    "oracao": "Pai, me ajuda a ficar em paz sabendo que Tu guerreias por mim."
+  },
+  {
+    "titulo": "Descanso da Ansiedade",
+    "versiculo": "Salmos 37:5",
+    "mensagem": "Entregar o caminho ao Senhor é o antídoto contra a angústia.",
+    "oracao": "Senhor, entrego o controle nas Tuas mãos."
+  },
+  {
+    "titulo": "Ansiedade Não Domina Quem Crê",
+    "versiculo": "João 14:27",
+    "mensagem": "A paz que Jesus dá não depende das circunstâncias.",
+    "oracao": "Jesus, coloca Tua paz onde minha alma está inquieta."
+  },
+  {
+    "titulo": "Descanso Interior",
+    "versiculo": "Salmos 62:1",
+    "mensagem": "A alma encontra descanso somente em Deus, não nas soluções humanas.",
+    "oracao": "Senhor, sossega meu coração em Ti."
   }
 ]

@@ -317,26 +317,34 @@ async function connectUserToWhatsApp(userId) {
             const groupInfo = isGroup ? ` no grupo "${chatName}"` : '';
             console.log(`📨 [${userId}] MENSAGEM RECEBIDA${groupInfo}: ${messageText}`);
 
-            // Automação Palavra Bereanos
-            if (messageText.toLowerCase().includes('palavra bereanos')) {
+            // Automação Bereanos
+            console.log(`🔍 [${userId}] Verificando mensagem: "${messageText}"`);
+            if (messageText.toLowerCase().includes('bereanos')) {
+                console.log(`🎯 [${userId}] TRIGGER DETECTADO! Enviando Palavra Bereanos...`);
                 try {
                     const fs = require('fs');
                     const path = require('path');
 
                     // Carregar palavras
                     const palavrasPath = path.join(__dirname, 'palavra-bereanos.json');
+                    console.log(`📁 [${userId}] Carregando arquivo: ${palavrasPath}`);
+
                     const palavras = JSON.parse(fs.readFileSync(palavrasPath, 'utf8'));
+                    console.log(`📊 [${userId}] ${palavras.length} palavras carregadas`);
 
                     // Escolher palavra aleatória
-                    const palavraAleatoria = palavras[Math.floor(Math.random() * palavras.length)];
+                    const randomIndex = Math.floor(Math.random() * palavras.length);
+                    const palavraAleatoria = palavras[randomIndex];
+                    console.log(`🎲 [${userId}] Palavra escolhida (#${randomIndex}): ${palavraAleatoria.titulo}`);
 
                     // Formatar mensagem
-                    const mensagemCompleta = `🙏 *${palavraAleatoria.titulo}*\n\n📖 *${palavraAleatoria.versiculo}*\n\n💭 ${palavraAleatoria.mensagem}\n\n🙌 *Oração:*\n${palavraAleatoria.oracao}\n\n✝️ _Palavra Bereanos_`;
+                    const mensagemCompleta = `🙏 *${palavraAleatoria.titulo}*\n\n📖 *${palavraAleatoria.versiculo}*\n\n💭 ${palavraAleatoria.mensagem}\n\n🙌 *Oração:*\n${palavraAleatoria.oracao}\n\n✝️ _Bereanos_`;
 
                     await session.sock.sendMessage(message.key.remoteJid, { text: mensagemCompleta });
-                    console.log(`✅ [${userId}] Palavra Bereanos enviada: ${palavraAleatoria.titulo}`);
+                    console.log(`✅ [${userId}] Palavra Bereanos enviada com sucesso!`);
                 } catch (error) {
                     console.error(`❌ [${userId}] Erro ao enviar Palavra Bereanos:`, error);
+                    console.error(`❌ [${userId}] Stack trace:`, error.stack);
                 }
             }
 
