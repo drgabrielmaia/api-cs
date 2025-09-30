@@ -392,7 +392,7 @@ async function connectUserToWhatsApp(userId) {
                     console.log(`🎲 [${userId}] Palavra escolhida (#${randomIndex}): ${palavraAleatoria.titulo}`);
 
                     // Formatar mensagem
-                    const mensagemCompleta = `🙏 *${palavraAleatoria.titulo}*\n\n📖 *${palavraAleatoria.versiculo}*\n\n💭 ${palavraAleatoria.mensagem}\n\n🙌 *Oração:*\n${palavraAleatoria.oracao}\n\n✝️ _Bereanos_`;
+                    const mensagemCompleta = `🙏 *${palavraAleatoria.titulo}*\n\n📖 *${palavraAleatoria.versiculo}*\n\n💭 ${palavraAleatoria.mensagem}\n\n🙌 *Oração:*\n${palavraAleatoria.oracao}`;
 
                     await session.sock.sendMessage(message.key.remoteJid, { text: mensagemCompleta });
                     console.log(`✅ [${userId}] Palavra Bereanos enviada com sucesso!`);
