@@ -217,8 +217,12 @@ app.get('/', (req, res) => {
 // Função para buscar eventos do dia no Supabase
 async function getEventsForToday() {
     try {
-        const today = new Date();
-        const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        // Ajustar para horário da Paraíba (UTC-3)
+        const now = new Date();
+        const brazilOffset = -3 * 60 * 60 * 1000; // UTC-3 em milissegundos
+        const brazilNow = new Date(now.getTime() + brazilOffset);
+
+        const todayStart = new Date(brazilNow.getFullYear(), brazilNow.getMonth(), brazilNow.getDate());
         const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
 
         const { data: events, error } = await supabase
@@ -276,8 +280,8 @@ async function sendWhatsAppMessage(phoneNumber, message) {
 }
 
 // Função principal para verificar e enviar notificações
-async function checkAndSendNotifications() {
-    console.log('🔄 Verificando eventos para notificações...');
+async function checkAndSendNotifications(isDailySummary = false) {
+    console.log(isDailySummary ? '🌅 Enviando resumo diário...' : '🔄 Verificando eventos para notificações...');
 
     if (!isReady) {
         console.log('⚠️ WhatsApp não está conectado. Pulando verificação.');
@@ -286,78 +290,81 @@ async function checkAndSendNotifications() {
 
     try {
         const events = await getEventsForToday();
+
+        // Ajustar para horário da Paraíba (UTC-3)
         const now = new Date();
-        const currentHour = now.getHours();
-        const currentMinute = now.getMinutes();
+        const brazilOffset = -3 * 60 * 60 * 1000;
+        const brazilNow = new Date(now.getTime() + brazilOffset);
+        const currentHour = brazilNow.getHours();
+        const currentMinute = brazilNow.getMinutes();
 
         let notificationsSent = 0;
 
-        // Verificar se é horário da notificação matinal (9h-9h05)
-        const isMorningTime = currentHour === 9 && currentMinute < 5;
+        // Se for resumo diário das 7h
+        if (isDailySummary) {
+            if (events.length > 0) {
+                let summaryMessage = '🌅 Bom dia! Aqui estão seus compromissos de hoje:\n\n';
 
+                events.sort((a, b) => new Date(a.start_datetime).getTime() - new Date(b.start_datetime).getTime());
+
+                for (const event of events) {
+                    const eventStart = new Date(event.start_datetime);
+                    const eventBrazil = new Date(eventStart.getTime() + brazilOffset);
+                    const timeStr = eventBrazil.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'});
+
+                    summaryMessage += `• ${timeStr} - ${event.title}`;
+                    if (event.mentorado_id && event.mentorados) {
+                        summaryMessage += ` (com ${event.mentorados.nome_completo})`;
+                    }
+                    summaryMessage += '\n';
+                }
+
+                summaryMessage += '\nTenha um ótimo dia! 🚀';
+
+                const sent = await sendWhatsAppMessage(adminPhone, summaryMessage);
+                if (sent) {
+                    console.log('✅ Resumo diário enviado com sucesso!');
+                    notificationsSent++;
+                }
+            } else {
+                console.log('ℹ️ Nenhum evento hoje para enviar resumo.');
+            }
+            return;
+        }
+
+        // Verificações de lembretes (apenas 30 minutos antes)
         for (const event of events) {
             const eventStart = new Date(event.start_datetime);
-            const timeDiffMinutes = (eventStart - now) / (1000 * 60);
+            const eventBrazil = new Date(eventStart.getTime() + brazilOffset);
+            const timeDiffMinutes = (eventBrazil - brazilNow) / (1000 * 60);
 
-            let shouldSendMorning = false;
-            let shouldSend30min = false;
-            let shouldSend1h = false;
+            // Enviar apenas lembrete de 30 minutos
+            if (timeDiffMinutes >= 25 && timeDiffMinutes <= 35) {
+                console.log(`⏰ Enviando lembrete de 30min para: ${event.title}`);
 
-            // Verificar tipo de notificação
-            if (isMorningTime) {
-                shouldSendMorning = true;
-                console.log(`📅 Notificação matinal para evento: ${event.title}`);
-            } else if (timeDiffMinutes >= 25 && timeDiffMinutes <= 35) {
-                shouldSend30min = true;
-                console.log(`⏰ Notificação 30min antes: ${event.title}`);
-            } else if (timeDiffMinutes >= 55 && timeDiffMinutes <= 65) {
-                shouldSend1h = true;
-                console.log(`⏰ Notificação 1h antes: ${event.title}`);
-            } else {
-                continue; // Não é hora de notificar este evento
-            }
-
-            // Preparar mensagens
-            let message = '';
-            let targetPhone = '';
-
-            if (shouldSendMorning || shouldSend30min) {
-                // Para mentorado (se existir)
+                // Para mentorado
                 if (event.mentorado_id && event.mentorados && event.mentorados.telefone) {
-                    targetPhone = event.mentorados.telefone;
+                    const message = `Oi ${event.mentorados.nome_completo}! Falta meia hora para nossa call 🙌\n\n` +
+                                  `Prepare um lugar tranquilo para que a gente possa mergulhar de verdade no seu cenário e já construir juntos os primeiros passos rumo à sua liberdade e transformação. 🚀`;
 
-                    if (shouldSendMorning) {
-                        message = `Bom dia, ${event.mentorados.nome_completo || 'amigo'}! ☀️\n\n` +
-                                `Daqui a pouco, às ${eventStart.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}, teremos nossa call para abrir um caminho de mais liberdade e resultados consistentes para você.\n\n` +
-                                `Esse é um espaço exclusivo para destravar pontos que hoje te prendem e já traçar passos claros rumo à transformação que você busca — tanto profissional quanto pessoal.`;
-                    } else {
-                        message = `Oi ${event.mentorados.nome_completo || 'amigo'}! Falta só meia hora para nossa call 🙌\n\n` +
-                                `Prepare um lugar tranquilo para que a gente possa mergulhar de verdade no seu cenário e já construir juntos os primeiros passos rumo à sua liberdade e transformação. 🚀`;
-                    }
-
-                    if (event.description) {
-                        message += `\n\nDescrição: ${event.description}`;
-                    }
-
-                    const sent = await sendWhatsAppMessage(targetPhone, message);
+                    const sent = await sendWhatsAppMessage(event.mentorados.telefone, message);
                     if (sent) notificationsSent++;
                 }
-            }
 
-            if (shouldSend1h || !event.mentorado_id) {
-                // Para admin (Gabriel)
+                // Para admin
+                let adminMessage = '';
                 if (event.mentorado_id && event.mentorados) {
-                    message = `📅 Lembrete: Call com ${event.mentorados.nome_completo} hoje às ${eventStart.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}\n\nEvento: ${event.title}`;
+                    adminMessage = `📅 Lembrete: Call com ${event.mentorados.nome_completo} em 30 minutos!\n\nEvento: ${event.title}`;
                 } else {
-                    message = `📅 Lembrete do seu evento de hoje: ${event.title} - ${eventStart.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}`;
+                    adminMessage = `📅 Lembrete: ${event.title} em 30 minutos!`;
                 }
 
                 if (event.description) {
-                    message += `\n\nDescrição: ${event.description}`;
+                    adminMessage += `\n\nDescrição: ${event.description}`;
                 }
 
-                const sent = await sendWhatsAppMessage(adminPhone, message);
-                if (sent) notificationsSent++;
+                const sentAdmin = await sendWhatsAppMessage(adminPhone, adminMessage);
+                if (sentAdmin) notificationsSent++;
             }
         }
 
@@ -370,27 +377,29 @@ async function checkAndSendNotifications() {
 
 // Configurar cron jobs
 function setupCronJobs() {
-    // Job principal: verificar a cada 2 minutos
+    // Job principal: verificar a cada 2 minutos para lembretes de 30min
     cron.schedule('*/2 * * * *', () => {
-        checkAndSendNotifications();
+        checkAndSendNotifications(false);
     });
 
-    // Job específico para 9h da manhã
-    cron.schedule('0 9 * * *', () => {
-        console.log('🌅 Executando job de notificações matinais...');
-        checkAndSendNotifications();
+    // Job para resumo diário às 7h da manhã (horário do servidor)
+    // Considerando que o servidor pode estar em UTC, ajustar para 10h UTC = 7h BRT
+    cron.schedule('0 10 * * *', () => {
+        console.log('🌅 Enviando resumo diário dos compromissos...');
+        checkAndSendNotifications(true);
     });
 
     console.log('⏰ Cron jobs configurados:');
-    console.log('   - Verificação a cada 2 minutos');
-    console.log('   - Notificação matinal às 9h');
+    console.log('   - Verificação de lembretes a cada 2 minutos (30min antes)');
+    console.log('   - Resumo diário às 7h da manhã (horário de Brasília)');
 }
 
 // Endpoint para testar notificações manualmente
 app.post('/test-notifications', async (req, res) => {
+    const { isDailySummary } = req.body;
     console.log('🧪 Testando sistema de notificações...');
-    await checkAndSendNotifications();
-    res.json({ success: true, message: 'Teste de notificações executado' });
+    await checkAndSendNotifications(isDailySummary || false);
+    res.json({ success: true, message: `Teste de ${isDailySummary ? 'resumo diário' : 'notificações'} executado` });
 });
 
 // Endpoint para listar eventos de hoje
