@@ -29,6 +29,9 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 const adminPhone = '5583996910414'; // Gabriel Maia
 
+// Controle de mensagens enviadas para evitar duplicatas
+const sentNotifications = new Set();
+
 function initializeClient() {
     client = new Client();
 
@@ -214,16 +217,23 @@ app.get('/', (req, res) => {
     }
 });
 
+// Função para obter horário de São Paulo usando timezone correta
+function getSaoPauloTime() {
+    return new Date().toLocaleString("en-US", {timeZone: "America/Sao_Paulo"});
+}
+
 // Função para buscar eventos do dia no Supabase
 async function getEventsForToday() {
     try {
-        // Ajustar para horário da Paraíba (UTC-3)
-        const now = new Date();
-        const brazilOffset = -3 * 60 * 60 * 1000; // UTC-3 em milissegundos
-        const brazilNow = new Date(now.getTime() + brazilOffset);
+        // Usar timezone correto de São Paulo (UTC-3 sem horário de verão, UTC-2 com horário de verão)
+        const saoPauloTime = new Date(getSaoPauloTime());
 
-        const todayStart = new Date(brazilNow.getFullYear(), brazilNow.getMonth(), brazilNow.getDate());
+        const todayStart = new Date(saoPauloTime.getFullYear(), saoPauloTime.getMonth(), saoPauloTime.getDate());
         const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
+
+        // Converter para UTC para consulta no banco
+        const todayStartUTC = new Date(todayStart.getTime() - saoPauloTime.getTimezoneOffset() * 60000);
+        const todayEndUTC = new Date(todayEnd.getTime() - saoPauloTime.getTimezoneOffset() * 60000);
 
         const { data: events, error } = await supabase
             .from('calendar_events')
@@ -239,8 +249,8 @@ async function getEventsForToday() {
                     telefone
                 )
             `)
-            .gte('start_datetime', todayStart.toISOString())
-            .lte('start_datetime', todayEnd.toISOString())
+            .gte('start_datetime', todayStartUTC.toISOString())
+            .lte('start_datetime', todayEndUTC.toISOString())
             .order('start_datetime');
 
         if (error) {
@@ -291,12 +301,10 @@ async function checkAndSendNotifications(isDailySummary = false) {
     try {
         const events = await getEventsForToday();
 
-        // Ajustar para horário da Paraíba (UTC-3)
-        const now = new Date();
-        const brazilOffset = -3 * 60 * 60 * 1000;
-        const brazilNow = new Date(now.getTime() + brazilOffset);
-        const currentHour = brazilNow.getHours();
-        const currentMinute = brazilNow.getMinutes();
+        // Usar horário correto de São Paulo
+        const saoPauloNow = new Date(getSaoPauloTime());
+        const currentHour = saoPauloNow.getHours();
+        const currentMinute = saoPauloNow.getMinutes();
 
         let notificationsSent = 0;
 
@@ -309,8 +317,9 @@ async function checkAndSendNotifications(isDailySummary = false) {
 
                 for (const event of events) {
                     const eventStart = new Date(event.start_datetime);
-                    const eventBrazil = new Date(eventStart.getTime() + brazilOffset);
-                    const timeStr = eventBrazil.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'});
+                    // Converter para horário de São Paulo
+                    const eventSaoPaulo = new Date(eventStart.toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
+                    const timeStr = eventSaoPaulo.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'});
 
                     summaryMessage += `• ${timeStr} - ${event.title}`;
                     if (event.mentorado_id && event.mentorados) {
@@ -335,11 +344,21 @@ async function checkAndSendNotifications(isDailySummary = false) {
         // Verificações de lembretes (apenas 30 minutos antes)
         for (const event of events) {
             const eventStart = new Date(event.start_datetime);
-            const eventBrazil = new Date(eventStart.getTime() + brazilOffset);
-            const timeDiffMinutes = (eventBrazil - brazilNow) / (1000 * 60);
+            // Converter para horário de São Paulo
+            const eventSaoPaulo = new Date(eventStart.toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
+            const timeDiffMinutes = (eventSaoPaulo - saoPauloNow) / (1000 * 60);
 
-            // Enviar apenas lembrete de 30 minutos
-            if (timeDiffMinutes >= 25 && timeDiffMinutes <= 35) {
+            // Gerar chave única para este evento e horário de notificação
+            const notificationKey = `${event.id}_30min_${eventStart.toISOString().slice(0, 16)}`;
+
+            // Enviar apenas lembrete de 30 minutos (mais preciso: entre 28 e 32 minutos)
+            if (timeDiffMinutes >= 28 && timeDiffMinutes <= 32) {
+                // Verificar se já enviou notificação para este evento
+                if (sentNotifications.has(notificationKey)) {
+                    console.log(`⏭️ Lembrete já enviado para: ${event.title}`);
+                    continue;
+                }
+
                 console.log(`⏰ Enviando lembrete de 30min para: ${event.title}`);
 
                 // Para mentorado
@@ -365,6 +384,9 @@ async function checkAndSendNotifications(isDailySummary = false) {
 
                 const sentAdmin = await sendWhatsAppMessage(adminPhone, adminMessage);
                 if (sentAdmin) notificationsSent++;
+
+                // Marcar como enviado
+                sentNotifications.add(notificationKey);
             }
         }
 
@@ -382,16 +404,28 @@ function setupCronJobs() {
         checkAndSendNotifications(false);
     });
 
-    // Job para resumo diário às 7h da manhã (horário do servidor)
-    // Considerando que o servidor pode estar em UTC, ajustar para 10h UTC = 7h BRT
-    cron.schedule('0 10 * * *', () => {
+    // Job para resumo diário às 7h da manhã (horário de São Paulo)
+    // Executar às 7h no horário de São Paulo
+    cron.schedule('0 7 * * *', () => {
         console.log('🌅 Enviando resumo diário dos compromissos...');
         checkAndSendNotifications(true);
+    }, {
+        timezone: "America/Sao_Paulo"
+    });
+
+    // Job para limpar cache de notificações enviadas à meia-noite
+    cron.schedule('0 0 * * *', () => {
+        console.log('🧹 Limpando cache de notificações enviadas...');
+        sentNotifications.clear();
+        console.log('✅ Cache limpo com sucesso!');
+    }, {
+        timezone: "America/Sao_Paulo"
     });
 
     console.log('⏰ Cron jobs configurados:');
     console.log('   - Verificação de lembretes a cada 2 minutos (30min antes)');
-    console.log('   - Resumo diário às 7h da manhã (horário de Brasília)');
+    console.log('   - Resumo diário às 7h da manhã (horário de São Paulo)');
+    console.log('   - Limpeza de cache à meia-noite (horário de São Paulo)');
 }
 
 // Endpoint para testar notificações manualmente
