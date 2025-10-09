@@ -143,6 +143,58 @@ app.post('/send', async (req, res) => {
     }
 });
 
+// Endpoint para registro de usuário padrão (compatibilidade com sistema anterior)
+app.post('/users/default/register', async (req, res) => {
+    try {
+        console.log('📝 Tentativa de registro de usuário:', req.body);
+
+        // Simular resposta de sucesso para compatibilidade
+        res.json({
+            success: true,
+            message: 'Usuário registrado com sucesso',
+            data: {
+                userId: 'default',
+                status: 'registered',
+                timestamp: new Date().toISOString()
+            }
+        });
+    } catch (error) {
+        console.error('❌ Erro no registro:', error);
+        res.json({
+            success: false,
+            error: 'Erro ao registrar usuário'
+        });
+    }
+});
+
+// Endpoint para envio de mensagem via rota de usuário padrão
+app.post('/users/default/send', async (req, res) => {
+    const { to, message } = req.body;
+
+    if (!isReady) {
+        return res.json({
+            success: false,
+            error: 'Cliente WhatsApp não está conectado'
+        });
+    }
+
+    try {
+        await client.sendMessage(to, message);
+        console.log(`📱 Mensagem enviada via /users/default/send para: ${to}`);
+        res.json({
+            success: true,
+            message: 'Mensagem enviada com sucesso',
+            data: {
+                to: to,
+                timestamp: new Date().toISOString()
+            }
+        });
+    } catch (error) {
+        console.error('Erro ao enviar mensagem via users/default/send:', error);
+        res.json({ success: false, error: 'Erro ao enviar mensagem' });
+    }
+});
+
 app.get('/messages', (req, res) => {
     res.json({
         success: true,

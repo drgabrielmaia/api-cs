@@ -981,8 +981,21 @@ app.get('/health', (req, res) => {
     res.json({
         success: true,
         message: 'WhatsApp Multi-User Baileys API is running',
-        activeUsers: userSessions.size
+        activeUsers: userSessions.size,
+        endpoints: {
+            register: '/users/default/register',
+            status: '/users/default/status',
+            send: '/users/default/send',
+            qr: '/users/default/qr'
+        }
     });
+});
+
+// Quick register endpoint for default user (convenience route)
+app.post('/register', async (req, res) => {
+    console.log('🚀 [CONVENIENCE] Registrando usuário default via /register...');
+    req.params = { userId: 'default' };
+    return app._router.handle(req, res, () => {});
 });
 
 // ================ LEGACY ROUTES FOR BACKWARD COMPATIBILITY ================
@@ -1036,6 +1049,17 @@ app.get('/', (req, res) => {
                 </div>
                 <div style="text-align: left; max-width: 800px; margin: 0 auto;">
                     <h3>🔧 API Endpoints</h3>
+
+                    <div style="background: #e8f5e8; padding: 15px; margin: 10px 0; border-radius: 5px;">
+                        <h4>⚡ Endpoints Principais (Usuário Default):</h4>
+                        <ul>
+                            <li><strong>POST /users/default/register</strong> - Registrar usuário padrão</li>
+                            <li><strong>GET /users/default/status</strong> - Status da conexão</li>
+                            <li><strong>GET /users/default/qr</strong> - QR Code para conectar</li>
+                            <li><strong>POST /users/default/send</strong> - Enviar mensagem</li>
+                        </ul>
+                    </div>
+
                     <h4>Gerenciamento de Usuários:</h4>
                     <ul>
                         <li>GET /users - Listar todos os usuários</li>
@@ -1051,6 +1075,14 @@ app.get('/', (req, res) => {
                         <li>GET /users/{userId}/contacts - Contatos do usuário</li>
                         <li>GET /users/{userId}/chats - Chats do usuário</li>
                     </ul>
+
+                    <div style="background: #fff3cd; padding: 15px; margin: 10px 0; border-radius: 5px;">
+                        <h4>💡 Como Usar:</h4>
+                        <p>1. <strong>POST /users/default/register</strong> para registrar</p>
+                        <p>2. <strong>GET /users/default/qr</strong> para obter QR Code</p>
+                        <p>3. Escaneie o QR Code no WhatsApp</p>
+                        <p>4. <strong>POST /users/default/send</strong> para enviar mensagens</p>
+                    </div>
                 </div>
             </body>
         </html>
