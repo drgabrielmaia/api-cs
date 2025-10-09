@@ -27,7 +27,7 @@ const supabaseUrl = 'https://udzmlnnztzzwrphhizol.supabase.co';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVkem1sbm56dHp6d3JwaGhpem9sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc0MjkwNzYsImV4cCI6MjA3MzAwNTA3Nn0.KjihWHrNYxDO5ZZKpa8UYPAhw9HIU11yvAvvsNaiPZU';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-const adminPhone = '5583996910414'; // Gabriel Maia
+const adminPhone = '558396910414'; // Gabriel Maia
 
 // Controle de mensagens enviadas para evitar duplicatas
 const sentNotifications = new Set();
