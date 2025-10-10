@@ -400,18 +400,22 @@ async function checkAndSendNotifications(isDailySummary = false) {
             const eventSaoPaulo = new Date(eventStart.toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
             const timeDiffMinutes = (eventSaoPaulo - saoPauloNow) / (1000 * 60);
 
-            // Gerar chave única para este evento e horário de notificação
-            const notificationKey = `${event.id}_30min_${eventStart.toISOString().slice(0, 16)}`;
+            // Gerar chave única para este evento específico (ID + data do evento)
+            const eventDateKey = eventStart.toISOString().slice(0, 10); // YYYY-MM-DD
+            const notificationKey = `${event.id}_30min_${eventDateKey}`;
 
             // Enviar apenas lembrete de 30 minutos (mais preciso: entre 28 e 32 minutos)
             if (timeDiffMinutes >= 28 && timeDiffMinutes <= 32) {
                 // Verificar se já enviou notificação para este evento
                 if (sentNotifications.has(notificationKey)) {
-                    console.log(`⏭️ Lembrete já enviado para: ${event.title}`);
+                    console.log(`⏭️ Lembrete já enviado para: ${event.title} (${eventDateKey})`);
                     continue;
                 }
 
-                console.log(`⏰ Enviando lembrete de 30min para: ${event.title}`);
+                console.log(`⏰ Enviando lembrete de 30min para: ${event.title} (diff: ${Math.round(timeDiffMinutes)}min)`);
+
+                // Marcar como enviado ANTES de enviar para evitar envios duplos
+                sentNotifications.add(notificationKey);
 
                 // Para mentorado
                 if (event.mentorado_id && event.mentorados && event.mentorados.telefone) {
@@ -419,7 +423,10 @@ async function checkAndSendNotifications(isDailySummary = false) {
                                   `Prepare um lugar tranquilo para que a gente possa mergulhar de verdade no seu cenário e já construir juntos os primeiros passos rumo à sua liberdade e transformação. 🚀`;
 
                     const sent = await sendWhatsAppMessage(event.mentorados.telefone, message);
-                    if (sent) notificationsSent++;
+                    if (sent) {
+                        notificationsSent++;
+                        console.log(`✅ Lembrete enviado para mentorado: ${event.mentorados.nome_completo}`);
+                    }
                 }
 
                 // Para admin
@@ -435,14 +442,14 @@ async function checkAndSendNotifications(isDailySummary = false) {
                 }
 
                 const sentAdmin = await sendWhatsAppMessage(adminPhone, adminMessage);
-                if (sentAdmin) notificationsSent++;
-
-                // Marcar como enviado
-                sentNotifications.add(notificationKey);
+                if (sentAdmin) {
+                    notificationsSent++;
+                    console.log(`✅ Lembrete enviado para admin sobre: ${event.title}`);
+                }
             }
         }
 
-        console.log(`✅ Verificação concluída. ${notificationsSent} notificações enviadas.`);
+        console.log(`✅ Verificação concluída. ${notificationsSent} notificações enviadas. Cache: ${sentNotifications.size} eventos já processados.`);
 
     } catch (error) {
         console.error('❌ Erro na verificação de notificações:', error);
