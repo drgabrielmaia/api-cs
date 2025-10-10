@@ -1181,6 +1181,15 @@ async function checkAndSendNotifications() {
             const eventStart = new Date(event.start_datetime);
             const timeDiffMinutes = (eventStart - now) / (1000 * 60);
 
+            // Criar chave única para este evento e horário
+            const eventKey = `${event.id}_${currentHour}_${Math.floor(currentMinute/5)}_${event.start_datetime}`;
+
+            // Verificar se já enviamos notificação para este evento neste intervalo
+            if (sentNotifications.has(eventKey)) {
+                console.log(`🛡️ [JOBS] Notificação já enviada para evento: ${event.title} (chave: ${eventKey})`);
+                continue;
+            }
+
             let shouldSendMorning = false;
             let shouldSend30min = false;
             let shouldSend1h = false;
@@ -1222,7 +1231,11 @@ async function checkAndSendNotifications() {
                     }
 
                     const sent = await sendBaileysMessage(targetPhone, message);
-                    if (sent) notificationsSent++;
+                    if (sent) {
+                        notificationsSent++;
+                        // Marcar como enviado
+                        sentNotifications.add(eventKey);
+                    }
                 }
             }
 
@@ -1239,21 +1252,44 @@ async function checkAndSendNotifications() {
                 }
 
                 const sent = await sendBaileysMessage(adminPhone, message);
-                if (sent) notificationsSent++;
+                if (sent) {
+                    notificationsSent++;
+                    // Marcar como enviado
+                    sentNotifications.add(eventKey);
+                }
             }
         }
 
         console.log(`✅ [JOBS] Verificação concluída. ${notificationsSent} notificações enviadas.`);
+
+        // Limpeza: remover notificações antigas (mais de 6 horas)
+        const cutoffTime = new Date(now.getTime() - 6 * 60 * 60 * 1000);
+        const keysToRemove = Array.from(sentNotifications).filter(key => {
+            const keyParts = key.split('_');
+            if (keyParts.length >= 4) {
+                const keyDate = new Date(keyParts.slice(3).join('_'));
+                return keyDate < cutoffTime;
+            }
+            return true; // Remove chaves malformadas
+        });
+
+        keysToRemove.forEach(key => sentNotifications.delete(key));
+        if (keysToRemove.length > 0) {
+            console.log(`🧹 [JOBS] Limpeza: ${keysToRemove.length} notificações antigas removidas.`);
+        }
 
     } catch (error) {
         console.error('❌ [JOBS] Erro na verificação de notificações:', error);
     }
 }
 
+// Controle de mensagens já enviadas
+const sentNotifications = new Set();
+
 // Configurar cron jobs
 function setupCronJobs() {
-    // Job principal: verificar a cada 2 minutos
-    cron.schedule('*/2 * * * *', () => {
+    // Job principal: verificar a cada 5 minutos (mudado de 2 para 5 minutos)
+    cron.schedule('*/5 * * * *', () => {
         checkAndSendNotifications();
     });
 
