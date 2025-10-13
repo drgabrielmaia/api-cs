@@ -1385,7 +1385,7 @@ async function getEventsForToday() {
                 )
             `)
             .gte('start_datetime', todayStartUTC.toISOString())
-            .lte('start_datetime', todayEndUTC.toISOString())
+            .lt('start_datetime', new Date(todayEndUTC.getTime() + 1).toISOString())
             .order('start_datetime');
 
         if (error) {
