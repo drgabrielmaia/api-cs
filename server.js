@@ -29,75 +29,24 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 const adminPhone = '558396910414'; // Gabriel Maia
 
-// Controle de mensagens enviadas para evitar duplicatas (backup em memória)
-const sentNotifications = new Set();
-
-// Função para verificar se já enviou notificação (persiste no banco)
-async function hasNotificationBeenSent(eventId, eventDate, type = '30min') {
+// Função para marcar evento como mensagem enviada
+async function markEventMessageSent(eventId) {
     try {
-        const notificationKey = `${eventId}_${type}_${eventDate}`;
-
-        // Verificar primeiro na memória (mais rápido)
-        if (sentNotifications.has(notificationKey)) {
-            return true;
-        }
-
-        // Verificar no banco de dados
-        const { data, error } = await supabase
-            .from('notification_logs')
-            .select('id')
-            .eq('event_id', eventId)
-            .eq('notification_type', type)
-            .eq('event_date', eventDate)
-            .limit(1);
+        const { error } = await supabase
+            .from('calendar_events')
+            .update({ mensagem_enviada: true })
+            .eq('id', eventId);
 
         if (error) {
-            console.error('❌ Erro ao verificar notificação no banco:', error.message);
-            // Em caso de erro, usar apenas controle em memória
+            console.error('❌ Erro ao marcar evento como enviado:', error.message);
             return false;
         }
 
-        // Se existe no banco, adicionar na memória também
-        if (data && data.length > 0) {
-            sentNotifications.add(notificationKey);
-            return true;
-        }
-
-        return false;
+        console.log(`✅ Evento ${eventId} marcado como mensagem enviada`);
+        return true;
     } catch (error) {
-        console.error('❌ Erro ao verificar notificação:', error);
+        console.error('❌ Erro ao atualizar evento:', error);
         return false;
-    }
-}
-
-// Função para marcar notificação como enviada (persiste no banco)
-async function markNotificationAsSent(eventId, eventDate, type = '30min', recipientPhone = null, recipientName = null) {
-    try {
-        const notificationKey = `${eventId}_${type}_${eventDate}`;
-
-        // Marcar na memória
-        sentNotifications.add(notificationKey);
-
-        // Salvar no banco de dados
-        const { error } = await supabase
-            .from('notification_logs')
-            .insert({
-                event_id: eventId,
-                notification_type: type,
-                event_date: eventDate,
-                recipient_phone: recipientPhone,
-                recipient_name: recipientName,
-                sent_at: new Date().toISOString()
-            });
-
-        if (error) {
-            console.error('❌ Erro ao salvar notificação no banco:', error.message);
-            // Continua funcionando mesmo se não conseguir salvar no banco
-        } else {
-            console.log(`💾 Notificação salva no banco: ${notificationKey}`);
-        }
-    } catch (error) {
-        console.error('❌ Erro ao marcar notificação:', error);
     }
 }
 
@@ -365,6 +314,7 @@ async function getEventsForToday() {
                 start_datetime,
                 end_datetime,
                 mentorado_id,
+                mensagem_enviada,
                 mentorados (
                     nome_completo,
                     telefone
@@ -469,22 +419,22 @@ async function checkAndSendNotifications(isDailySummary = false) {
             const eventSaoPaulo = new Date(eventStart.toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
             const timeDiffMinutes = (eventSaoPaulo - saoPauloNow) / (1000 * 60);
 
-            // Gerar chave única para este evento específico (ID + data do evento)
-            const eventDateKey = eventStart.toISOString().slice(0, 10); // YYYY-MM-DD
-
             // Enviar apenas lembrete de 30 minutos (mais preciso: entre 28 e 32 minutos)
             if (timeDiffMinutes >= 28 && timeDiffMinutes <= 32) {
-                // Verificar se já enviou notificação para este evento (banco + memória)
-                const alreadySent = await hasNotificationBeenSent(event.id, eventDateKey, '30min');
-                if (alreadySent) {
-                    console.log(`⏭️ Lembrete já enviado para: ${event.title} (${eventDateKey}) - verificação robusta`);
+                // Verificar se já enviou mensagem para este evento (campo direto na tabela)
+                if (event.mensagem_enviada) {
+                    console.log(`⏭️ Lembrete já enviado para: ${event.title} - campo mensagem_enviada = true`);
                     continue;
                 }
 
                 console.log(`⏰ Enviando lembrete de 30min para: ${event.title} (diff: ${Math.round(timeDiffMinutes)}min)`);
 
-                // Marcar como enviado ANTES de enviar (banco + memória)
-                await markNotificationAsSent(event.id, eventDateKey, '30min', null, event.title);
+                // Marcar como enviado ANTES de enviar mensagem
+                const marked = await markEventMessageSent(event.id);
+                if (!marked) {
+                    console.log(`❌ Falha ao marcar evento ${event.id} como enviado. Pulando para evitar spam.`);
+                    continue;
+                }
 
                 // Para mentorado
                 if (event.mentorado_id && event.mentorados && event.mentorados.telefone) {
@@ -495,9 +445,6 @@ async function checkAndSendNotifications(isDailySummary = false) {
                     if (sent) {
                         notificationsSent++;
                         console.log(`✅ Lembrete enviado para mentorado: ${event.mentorados.nome_completo}`);
-                        // Registrar envio específico para o mentorado
-                        await markNotificationAsSent(event.id, eventDateKey, '30min_mentorado',
-                                                  event.mentorados.telefone, event.mentorados.nome_completo);
                     }
                 }
 
@@ -517,13 +464,11 @@ async function checkAndSendNotifications(isDailySummary = false) {
                 if (sentAdmin) {
                     notificationsSent++;
                     console.log(`✅ Lembrete enviado para admin sobre: ${event.title}`);
-                    // Registrar envio para admin
-                    await markNotificationAsSent(event.id, eventDateKey, '30min_admin', adminPhone, 'Admin');
                 }
             }
         }
 
-        console.log(`✅ Verificação concluída. ${notificationsSent} notificações enviadas. Cache: ${sentNotifications.size} eventos já processados.`);
+        console.log(`✅ Verificação concluída. ${notificationsSent} notificações enviadas.`);
 
     } catch (error) {
         console.error('❌ Erro na verificação de notificações:', error);
@@ -546,19 +491,9 @@ function setupCronJobs() {
         timezone: "America/Sao_Paulo"
     });
 
-    // Job para limpar cache de notificações enviadas à meia-noite
-    cron.schedule('0 0 * * *', () => {
-        console.log('🧹 Limpando cache de notificações enviadas...');
-        sentNotifications.clear();
-        console.log('✅ Cache limpo com sucesso!');
-    }, {
-        timezone: "America/Sao_Paulo"
-    });
-
     console.log('⏰ Cron jobs configurados:');
     console.log('   - Verificação de lembretes a cada 2 minutos (30min antes)');
     console.log('   - Resumo diário às 7h da manhã (horário de São Paulo)');
-    console.log('   - Limpeza de cache à meia-noite (horário de São Paulo)');
 }
 
 // Endpoint para testar notificações manualmente
