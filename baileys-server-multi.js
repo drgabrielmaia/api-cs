@@ -1354,15 +1354,11 @@ function getSaoPauloTime() {
 // Função para buscar eventos do dia no Supabase com dados de leads/mentorados
 async function getEventsForToday() {
     try {
-        // Usar timezone correto de São Paulo
-        const saoPauloTime = new Date(getSaoPauloTime());
+        // Buscar eventos de hoje usando data simples (sem conversão de timezone)
+        const today = '2025-10-13';
+        const tomorrow = '2025-10-14';
 
-        const todayStart = new Date(saoPauloTime.getFullYear(), saoPauloTime.getMonth(), saoPauloTime.getDate());
-        const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
-
-        // Converter para UTC para consulta no banco
-        const todayStartUTC = new Date(todayStart.getTime() - saoPauloTime.getTimezoneOffset() * 60000);
-        const todayEndUTC = new Date(todayEnd.getTime() - saoPauloTime.getTimezoneOffset() * 60000);
+        console.log(`🔍 Buscando eventos entre ${today} e ${tomorrow}`);
 
         const { data: events, error } = await supabase
             .from('calendar_events')
@@ -1384,14 +1380,16 @@ async function getEventsForToday() {
                     telefone
                 )
             `)
-            .gte('start_datetime', todayStartUTC.toISOString())
-            .lte('start_datetime', todayEndUTC.toISOString())
+            .gte('start_datetime', today)
+            .lt('start_datetime', tomorrow)
             .order('start_datetime');
 
         if (error) {
             console.error('Erro ao buscar eventos:', error);
             return [];
         }
+
+        console.log(`📅 Eventos encontrados: ${events?.length || 0}`);
 
         return events || [];
     } catch (error) {
