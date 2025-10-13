@@ -1638,6 +1638,53 @@ app.get('/events/today', async (req, res) => {
     }
 });
 
+// Endpoint temporário para debug de timezone
+app.get('/debug/timezone', async (req, res) => {
+    try {
+        // Dados de timezone atual
+        const saoPauloTime = new Date(getSaoPauloTime());
+        const utcTime = new Date();
+
+        const todayStart = new Date(saoPauloTime.getFullYear(), saoPauloTime.getMonth(), saoPauloTime.getDate());
+        const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
+
+        const todayStartUTC = new Date(todayStart.getTime() - saoPauloTime.getTimezoneOffset() * 60000);
+        const todayEndUTC = new Date(todayEnd.getTime() - saoPauloTime.getTimezoneOffset() * 60000);
+
+        // Buscar TODOS os eventos sem filtro de data para comparar
+        const { data: allEvents, error } = await supabase
+            .from('calendar_events')
+            .select(`
+                id,
+                title,
+                start_datetime,
+                created_at
+            `)
+            .order('start_datetime', { ascending: false })
+            .limit(10);
+
+        res.json({
+            success: true,
+            debug: {
+                saoPauloTime: saoPauloTime.toISOString(),
+                utcTime: utcTime.toISOString(),
+                todayStart: todayStart.toISOString(),
+                todayEnd: todayEnd.toISOString(),
+                todayStartUTC: todayStartUTC.toISOString(),
+                todayEndUTC: todayEndUTC.toISOString(),
+                timezoneOffset: saoPauloTime.getTimezoneOffset(),
+                queryRange: {
+                    from: todayStartUTC.toISOString(),
+                    to: todayEndUTC.toISOString()
+                }
+            },
+            allEvents: allEvents || []
+        });
+    } catch (error) {
+        res.json({ success: false, error: error.message });
+    }
+});
+
 app.listen(port, async () => {
     console.log(`🚀 WhatsApp Multi-User Baileys API rodando em http://localhost:${port}`);
     console.log(`👥 Sistema preparado para múltiplos usuários`);
