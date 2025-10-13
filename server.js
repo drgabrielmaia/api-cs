@@ -456,7 +456,11 @@ async function checkAndSendNotifications(isDailySummary = false) {
                 }
 
                 // Para lead (mesmo tipo de mensagem)
+                console.log(`🔍 Debug lead - event.lead_id: ${event.lead_id}, event.leads: ${JSON.stringify(event.leads)}`);
+
                 if (event.lead_id && event.leads && event.leads.telefone) {
+                    console.log(`📱 Enviando mensagem para lead: ${event.leads.nome} (${event.leads.telefone})`);
+
                     const message = `Oi ${event.leads.nome}! Falta meia hora para nossa call 🙌\n\n` +
                                   `Prepare um lugar tranquilo para que a gente possa mergulhar de verdade no seu cenário e já construir juntos os primeiros passos rumo à sua liberdade e transformação. 🚀`;
 
@@ -464,7 +468,11 @@ async function checkAndSendNotifications(isDailySummary = false) {
                     if (sent) {
                         notificationsSent++;
                         console.log(`✅ Lembrete enviado para lead: ${event.leads.nome}`);
+                    } else {
+                        console.log(`❌ Falha ao enviar lembrete para lead: ${event.leads.nome}`);
                     }
+                } else {
+                    console.log(`⏭️ Pulando lead - Motivo: lead_id=${!!event.lead_id}, leads=${!!event.leads}, telefone=${event.leads?.telefone}`);
                 }
 
                 // Para admin
@@ -523,6 +531,43 @@ app.post('/test-notifications', async (req, res) => {
     console.log('🧪 Testando sistema de notificações...');
     await checkAndSendNotifications(isDailySummary || false);
     res.json({ success: true, message: `Teste de ${isDailySummary ? 'resumo diário' : 'notificações'} executado` });
+});
+
+// Endpoint para debug de eventos com leads
+app.get('/debug/events', async (req, res) => {
+    try {
+        const events = await getEventsForToday();
+
+        console.log('🔍 Debug - Total eventos encontrados:', events.length);
+
+        const debugInfo = events.map(event => ({
+            id: event.id,
+            title: event.title,
+            start_datetime: event.start_datetime,
+            mensagem_enviada: event.mensagem_enviada,
+            mentorado: {
+                id: event.mentorado_id,
+                nome: event.mentorados?.nome_completo,
+                telefone: event.mentorados?.telefone
+            },
+            lead: {
+                id: event.lead_id,
+                nome: event.leads?.nome,
+                telefone: event.leads?.telefone
+            }
+        }));
+
+        console.log('📊 Debug eventos:', JSON.stringify(debugInfo, null, 2));
+
+        res.json({
+            success: true,
+            total: events.length,
+            events: debugInfo
+        });
+    } catch (error) {
+        console.error('❌ Erro no debug:', error);
+        res.json({ success: false, error: error.message });
+    }
 });
 
 // Endpoint para listar eventos de hoje
