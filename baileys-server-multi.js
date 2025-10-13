@@ -1351,11 +1351,18 @@ function getSaoPauloTime() {
     return new Date().toLocaleString("en-US", {timeZone: "America/Sao_Paulo"});
 }
 
-// Função para buscar eventos próximos (hoje e futuro) no Supabase com dados de leads/mentorados
+// Função para buscar eventos do dia no Supabase com dados de leads/mentorados
 async function getEventsForToday() {
     try {
-        // Buscar TODOS os eventos recentes sem filtro complexo de data
-        console.log(`🔍 Buscando todos os eventos recentes...`);
+        // Usar timezone correto de São Paulo
+        const saoPauloTime = new Date(getSaoPauloTime());
+
+        const todayStart = new Date(saoPauloTime.getFullYear(), saoPauloTime.getMonth(), saoPauloTime.getDate());
+        const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
+
+        // Converter para UTC para consulta no banco
+        const todayStartUTC = new Date(todayStart.getTime() - saoPauloTime.getTimezoneOffset() * 60000);
+        const todayEndUTC = new Date(todayEnd.getTime() - saoPauloTime.getTimezoneOffset() * 60000);
 
         const { data: events, error } = await supabase
             .from('calendar_events')
@@ -1377,17 +1384,13 @@ async function getEventsForToday() {
                     telefone
                 )
             `)
-            .gte('start_datetime', '2025-10-13')
+            .gte('start_datetime', todayStartUTC.toISOString())
+            .lte('start_datetime', todayEndUTC.toISOString())
             .order('start_datetime');
 
         if (error) {
             console.error('Erro ao buscar eventos:', error);
             return [];
-        }
-
-        console.log(`📅 Eventos encontrados: ${events?.length || 0}`);
-        if (events && events.length > 0) {
-            console.log('📋 Primeiros eventos:', events.slice(0, 3).map(e => ({ id: e.id, title: e.title, start: e.start_datetime })));
         }
 
         return events || [];
@@ -1613,37 +1616,48 @@ app.post('/test-whatsapp', async (req, res) => {
 // Endpoint para debug de eventos com leads
 app.get('/debug/events', async (req, res) => {
     try {
-        const events = await getEventsForToday();
+        // Buscar dados RAW do Supabase para debug completo
+        console.log('🔍 Fazendo busca RAW no Supabase...');
 
-        console.log('🔍 Debug - Total eventos encontrados:', events.length);
+        const { data: rawEvents, error: rawError } = await supabase
+            .from('calendar_events')
+            .select(`
+                *,
+                mentorados (*),
+                leads (*)
+            `)
+            .gte('start_datetime', '2025-10-13')
+            .order('start_datetime')
+            .limit(10);
 
-        const debugInfo = events.map(event => ({
-            id: event.id,
-            title: event.title,
-            start_datetime: event.start_datetime,
-            mensagem_enviada: event.mensagem_enviada,
-            mentorado: {
-                id: event.mentorado_id,
-                nome: event.mentorados?.nome_completo,
-                telefone: event.mentorados?.telefone
-            },
-            lead: {
-                id: event.lead_id,
-                nome: event.leads?.nome,
-                telefone: event.leads?.telefone
-            }
-        }));
+        console.log('📊 Resposta RAW do Supabase:');
+        console.log('- Error:', rawError);
+        console.log('- Data length:', rawEvents?.length || 0);
+        console.log('- First event:', rawEvents?.[0] || 'nenhum');
 
-        console.log('📊 Debug eventos:', JSON.stringify(debugInfo, null, 2));
+        // Também testar a função getEventsForToday
+        const processedEvents = await getEventsForToday();
 
         res.json({
             success: true,
-            total: events.length,
-            events: debugInfo
+            supabaseRaw: {
+                error: rawError,
+                totalEvents: rawEvents?.length || 0,
+                events: rawEvents || []
+            },
+            processedEvents: {
+                total: processedEvents.length,
+                events: processedEvents
+            },
+            debug: {
+                supabaseUrl: supabaseUrl,
+                hasSupabaseKey: !!supabaseKey,
+                keyPreview: supabaseKey?.substring(0, 20) + '...'
+            }
         });
     } catch (error) {
         console.error('❌ Erro no debug:', error);
-        res.json({ success: false, error: error.message });
+        res.json({ success: false, error: error.message, stack: error.stack });
     }
 });
 
