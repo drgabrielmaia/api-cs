@@ -1499,14 +1499,15 @@ async function checkAndSendNotifications(isDailySummary = false) {
             const eventStart = new Date(event.start_datetime);
             // Diminuir 3h do evento para converter para horário de São Paulo
             const eventStartSP = new Date(eventStart.getTime() - 3 * 60 * 60 * 1000);
-            const now = new Date();
+            // Diminuir 3h do now também para comparar no horário de São Paulo
+            const nowSP = new Date(new Date().getTime() - 3 * 60 * 60 * 1000);
 
-            const timeDiffMinutes = (eventStartSP - now) / (1000 * 60);
+            const timeDiffMinutes = (eventStartSP - nowSP) / (1000 * 60);
 
             console.log(`🕐 Evento: ${event.title}`);
             console.log(`   Start UTC: ${eventStart.toISOString()}`);
             console.log(`   Start SP: ${eventStartSP.toISOString()}`);
-            console.log(`   Now UTC: ${now.toISOString()}`);
+            console.log(`   Now SP: ${nowSP.toISOString()}`);
             console.log(`   Diff: ${Math.round(timeDiffMinutes)} minutos`);
 
             // Enviar apenas lembrete de 30 minutos (mais preciso: entre 28 e 32 minutos)
