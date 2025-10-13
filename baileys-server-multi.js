@@ -1351,15 +1351,14 @@ function getSaoPauloTime() {
     return new Date().toLocaleString("en-US", {timeZone: "America/Sao_Paulo"});
 }
 
-// Função para buscar eventos do dia no Supabase com dados de leads/mentorados
+// Função para buscar eventos próximos (hoje e futuro) no Supabase com dados de leads/mentorados
 async function getEventsForToday() {
     try {
-        // Simpler approach: get today in UTC and search
+        // Buscar eventos de hoje em diante (próximos 7 dias para teste)
         const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
+        const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-        console.log(`🔍 Buscando eventos entre ${today.toISOString()} e ${tomorrow.toISOString()}`);
+        console.log(`🔍 Buscando eventos próximos entre ${now.toISOString()} e ${sevenDaysFromNow.toISOString()}`);
 
         const { data: events, error } = await supabase
             .from('calendar_events')
@@ -1381,8 +1380,8 @@ async function getEventsForToday() {
                     telefone
                 )
             `)
-            .gte('start_datetime', today.toISOString())
-            .lt('start_datetime', tomorrow.toISOString())
+            .gte('start_datetime', now.toISOString())
+            .lte('start_datetime', sevenDaysFromNow.toISOString())
             .order('start_datetime');
 
         if (error) {
@@ -1390,7 +1389,7 @@ async function getEventsForToday() {
             return [];
         }
 
-        console.log(`📅 Eventos encontrados: ${events?.length || 0}`);
+        console.log(`📅 Eventos próximos encontrados: ${events?.length || 0}`);
 
         return events || [];
     } catch (error) {
