@@ -1589,6 +1589,28 @@ app.post('/test-notifications', async (req, res) => {
     res.json({ success: true, message: `Teste de ${isDailySummary ? 'resumo diário' : 'notificações'} executado` });
 });
 
+// Endpoint para forçar envio de mensagem de teste
+app.post('/test-whatsapp', async (req, res) => {
+    try {
+        const { phone, message } = req.body;
+        const phoneToUse = phone || adminPhone;
+        const messageToUse = message || 'Teste de mensagem do sistema de lembretes! 🚀';
+
+        console.log(`📱 Testando envio para: ${phoneToUse}`);
+
+        const sent = await sendWhatsAppMessage(phoneToUse, messageToUse);
+
+        res.json({
+            success: sent,
+            message: sent ? 'Mensagem enviada com sucesso!' : 'Falha ao enviar mensagem',
+            phone: phoneToUse,
+            whatsappReady: userSessions.get(defaultUserId)?.isReady || false
+        });
+    } catch (error) {
+        res.json({ success: false, error: error.message });
+    }
+});
+
 // Endpoint para debug de eventos com leads
 app.get('/debug/events', async (req, res) => {
     try {
