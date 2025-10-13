@@ -1617,6 +1617,48 @@ app.post('/test-whatsapp', async (req, res) => {
     }
 });
 
+// Endpoint para testar lembrete forçado (ignora tempo)
+app.post('/test-reminder-force', async (req, res) => {
+    try {
+        const events = await getEventsForToday();
+
+        if (events.length === 0) {
+            return res.json({ success: false, message: 'Nenhum evento encontrado para testar' });
+        }
+
+        const event = events[0]; // Pegar primeiro evento
+        console.log(`🧪 TESTE FORÇADO - Enviando lembrete para: ${event.title}`);
+
+        let messagesSent = 0;
+
+        // Para lead
+        if (event.lead_id && event.leads && event.leads.telefone) {
+            const message = `Oi ${event.leads.nome}! Falta meia hora para nossa call 🙌\n\n` +
+                          `Prepare um lugar tranquilo para que a gente possa mergulhar de verdade no seu cenário e já construir juntos os primeiros passos rumo à sua liberdade e transformação. 🚀`;
+
+            const sent = await sendWhatsAppMessage(event.leads.telefone, message);
+            if (sent) messagesSent++;
+        }
+
+        // Para admin
+        const adminMessage = `📅 TESTE - Lembrete: Call com ${event.leads?.nome || 'lead'} em 30 minutos!\n\nEvento: ${event.title}`;
+        const sentAdmin = await sendWhatsAppMessage(adminPhone, adminMessage);
+        if (sentAdmin) messagesSent++;
+
+        res.json({
+            success: messagesSent > 0,
+            message: `Teste realizado! ${messagesSent} mensagens enviadas`,
+            event: {
+                title: event.title,
+                lead: event.leads?.nome,
+                phone: event.leads?.telefone
+            }
+        });
+    } catch (error) {
+        res.json({ success: false, error: error.message });
+    }
+});
+
 // Endpoint para debug de eventos com leads
 app.get('/debug/events', async (req, res) => {
     try {
