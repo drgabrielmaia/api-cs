@@ -1637,6 +1637,56 @@ app.get('/events/today', async (req, res) => {
     }
 });
 
+// Endpoint para testar query diretamente
+app.get('/debug/query-test', async (req, res) => {
+    try {
+        // Test 1: Buscar eventos de hoje usando data string
+        const todayStr = '2025-10-13';
+
+        const { data: eventsToday, error: errorToday } = await supabase
+            .from('calendar_events')
+            .select(`
+                id,
+                title,
+                start_datetime,
+                mensagem_enviada,
+                mentorados (nome_completo),
+                leads (nome)
+            `)
+            .gte('start_datetime', todayStr)
+            .lt('start_datetime', '2025-10-14')
+            .order('start_datetime');
+
+        // Test 2: Buscar todos os eventos recentes
+        const { data: allRecent, error: errorAll } = await supabase
+            .from('calendar_events')
+            .select('id, title, start_datetime, mensagem_enviada')
+            .gte('start_datetime', '2025-10-10')
+            .order('start_datetime', { ascending: false })
+            .limit(5);
+
+        res.json({
+            success: true,
+            tests: {
+                todayEvents: {
+                    query: `>= ${todayStr} AND < 2025-10-14`,
+                    count: eventsToday?.length || 0,
+                    events: eventsToday || [],
+                    error: errorToday
+                },
+                recentEvents: {
+                    query: '>= 2025-10-10',
+                    count: allRecent?.length || 0,
+                    events: allRecent || [],
+                    error: errorAll
+                }
+            }
+        });
+    } catch (error) {
+        res.json({ success: false, error: error.message });
+    }
+});
+
 // Endpoint temporário para debug de timezone
 app.get('/debug/timezone', async (req, res) => {
     try {
