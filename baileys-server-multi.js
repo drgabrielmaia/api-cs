@@ -1440,19 +1440,36 @@ async function checkAndSendNotifications(isDailySummary = false) {
         let notificationsSent = 0;
         const saoPauloNow = new Date(getSaoPauloTime());
 
-        // Resumo diário às 7h da manhã
+        // Resumo diário às 7h da manhã (horário SP)
         if (isDailySummary) {
             console.log('🌅 Enviando resumo diário dos compromissos...');
 
-            if (events.length > 0) {
+            // Buscar eventos do dia considerando timezone SP
+            const saoPauloTime = new Date();
+            saoPauloTime.setHours(saoPauloTime.getHours() - 3); // Converter para SP
+
+            const todayStart = new Date(saoPauloTime.getFullYear(), saoPauloTime.getMonth(), saoPauloTime.getDate());
+            const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+
+            // Converter de volta para UTC para buscar no banco
+            const todayStartUTC = new Date(todayStart.getTime() + 3 * 60 * 60 * 1000);
+            const todayEndUTC = new Date(todayEnd.getTime() + 3 * 60 * 60 * 1000);
+
+            const eventsToday = events.filter(event => {
+                const eventTime = new Date(event.start_datetime);
+                return eventTime >= todayStartUTC && eventTime < todayEndUTC;
+            });
+
+            if (eventsToday.length > 0) {
                 let summaryMessage = `🌅 Bom dia! Aqui estão seus compromissos de hoje:\n\n`;
 
-                for (const event of events) {
+                for (const event of eventsToday) {
                     const eventTime = new Date(event.start_datetime);
-                    const timeStr = eventTime.toLocaleTimeString('pt-BR', {
+                    // Diminuir 3h para converter para horário de São Paulo
+                    const eventTimeSP = new Date(eventTime.getTime() - 3 * 60 * 60 * 1000);
+                    const timeStr = eventTimeSP.toLocaleTimeString('pt-BR', {
                         hour: '2-digit',
-                        minute: '2-digit',
-                        timeZone: 'America/Sao_Paulo'
+                        minute: '2-digit'
                     });
 
                     summaryMessage += `• ${timeStr} - ${event.title}`;
