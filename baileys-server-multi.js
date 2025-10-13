@@ -1354,11 +1354,12 @@ function getSaoPauloTime() {
 // Função para buscar eventos do dia no Supabase com dados de leads/mentorados
 async function getEventsForToday() {
     try {
-        // Buscar eventos próximos (próximos 2 dias para pegar eventos de hoje e amanhã)
+        // Buscar eventos de hoje (desde agora - 6h até amanhã)
         const now = new Date();
-        const tomorrow = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
+        const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000);
+        const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
-        console.log(`🔍 Buscando eventos entre ${now.toISOString()} e ${tomorrow.toISOString()}`);
+        console.log(`🔍 Buscando eventos entre ${sixHoursAgo.toISOString()} e ${tomorrow.toISOString()}`);
 
         const { data: events, error } = await supabase
             .from('calendar_events')
@@ -1380,7 +1381,7 @@ async function getEventsForToday() {
                     telefone
                 )
             `)
-            .gte('start_datetime', now.toISOString())
+            .gte('start_datetime', sixHoursAgo.toISOString())
             .lte('start_datetime', tomorrow.toISOString())
             .order('start_datetime');
 
@@ -1389,7 +1390,7 @@ async function getEventsForToday() {
             return [];
         }
 
-        console.log(`📅 Eventos próximos encontrados: ${events?.length || 0}`);
+        console.log(`📅 Eventos encontrados: ${events?.length || 0}`);
 
         return events || [];
     } catch (error) {
