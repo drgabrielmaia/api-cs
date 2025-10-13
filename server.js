@@ -314,9 +314,14 @@ async function getEventsForToday() {
                 start_datetime,
                 end_datetime,
                 mentorado_id,
+                lead_id,
                 mensagem_enviada,
                 mentorados (
                     nome_completo,
+                    telefone
+                ),
+                leads (
+                    nome,
                     telefone
                 )
             `)
@@ -395,6 +400,8 @@ async function checkAndSendNotifications(isDailySummary = false) {
                     summaryMessage += `• ${timeStr} - ${event.title}`;
                     if (event.mentorado_id && event.mentorados) {
                         summaryMessage += ` (com ${event.mentorados.nome_completo})`;
+                    } else if (event.lead_id && event.leads) {
+                        summaryMessage += ` (com ${event.leads.nome} - lead)`;
                     }
                     summaryMessage += '\n';
                 }
@@ -448,10 +455,24 @@ async function checkAndSendNotifications(isDailySummary = false) {
                     }
                 }
 
+                // Para lead (mesmo tipo de mensagem)
+                if (event.lead_id && event.leads && event.leads.telefone) {
+                    const message = `Oi ${event.leads.nome}! Falta meia hora para nossa call 🙌\n\n` +
+                                  `Prepare um lugar tranquilo para que a gente possa mergulhar de verdade no seu cenário e já construir juntos os primeiros passos rumo à sua liberdade e transformação. 🚀`;
+
+                    const sent = await sendWhatsAppMessage(event.leads.telefone, message);
+                    if (sent) {
+                        notificationsSent++;
+                        console.log(`✅ Lembrete enviado para lead: ${event.leads.nome}`);
+                    }
+                }
+
                 // Para admin
                 let adminMessage = '';
                 if (event.mentorado_id && event.mentorados) {
-                    adminMessage = `📅 Lembrete: Call com ${event.mentorados.nome_completo} em 30 minutos!\n\nEvento: ${event.title}`;
+                    adminMessage = `📅 Lembrete: Call com ${event.mentorados.nome_completo} (mentorado) em 30 minutos!\n\nEvento: ${event.title}`;
+                } else if (event.lead_id && event.leads) {
+                    adminMessage = `📅 Lembrete: Call com ${event.leads.nome} (lead) em 30 minutos!\n\nEvento: ${event.title}`;
                 } else {
                     adminMessage = `📅 Lembrete: ${event.title} em 30 minutos!`;
                 }
