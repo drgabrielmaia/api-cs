@@ -603,7 +603,7 @@ app.get('/events', (req, res) => {
 
 // Rotas da API
 app.get('/health', (req, res) => {
-    res.json({ success: true, message: 'WhatsApp Baileys API is running' });
+    res.json({ success: true, message: 'WhatsApp Baileys API is running :)' });
 });
 
 app.get('/status', (req, res) => {

@@ -980,7 +980,7 @@ app.get('/users', async (req, res) => {
 app.get('/health', (req, res) => {
     res.json({
         success: true,
-        message: 'WhatsApp Multi-User Baileys API is running',
+        message: 'WhatsApp Multi-User Baileys API is runningggggg',
         activeUsers: userSessions.size,
         endpoints: {
             register: '/users/default/register',
