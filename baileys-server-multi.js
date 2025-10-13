@@ -1040,7 +1040,7 @@ app.get('/', (req, res) => {
         <html>
             <head><title>WhatsApp Multi-User Baileys API</title></head>
             <body style="font-family: Arial; text-align: center; padding: 50px;">
-                <h1>🚀 WhatsApp Multi-User API</h1>
+                <h1>🚀 WhatsApp Multi-User API 1.0</h1>
                 <p><strong>Suporte a múltiplos usuários com Baileys!</strong></p>
                 <div style="background: #f5f5f5; padding: 20px; margin: 20px auto; max-width: 600px; border-radius: 10px;">
                     <h3>📊 Status do Sistema</h3>
