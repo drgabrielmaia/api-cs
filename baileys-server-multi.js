@@ -1321,6 +1321,323 @@ app.get('/events/today', async (req, res) => {
     }
 });
 
+// ==========================================
+// SISTEMA DE NOTIFICAÇÕES E ANTI-SPAM
+// ==========================================
+
+// Função para marcar evento como mensagem enviada (anti-spam)
+async function markEventMessageSent(eventId) {
+    try {
+        const { error } = await supabase
+            .from('calendar_events')
+            .update({ mensagem_enviada: true })
+            .eq('id', eventId);
+
+        if (error) {
+            console.error('❌ Erro ao marcar evento como enviado:', error);
+            return false;
+        }
+
+        console.log(`✅ Evento ${eventId} marcado como mensagem enviada`);
+        return true;
+    } catch (error) {
+        console.error('❌ Erro ao marcar evento:', error);
+        return false;
+    }
+}
+
+// Função para obter horário de São Paulo usando timezone correta
+function getSaoPauloTime() {
+    return new Date().toLocaleString("en-US", {timeZone: "America/Sao_Paulo"});
+}
+
+// Função para buscar eventos do dia no Supabase com dados de leads/mentorados
+async function getEventsForToday() {
+    try {
+        // Usar timezone correto de São Paulo
+        const saoPauloTime = new Date(getSaoPauloTime());
+
+        const todayStart = new Date(saoPauloTime.getFullYear(), saoPauloTime.getMonth(), saoPauloTime.getDate());
+        const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
+
+        // Converter para UTC para consulta no banco
+        const todayStartUTC = new Date(todayStart.getTime() - saoPauloTime.getTimezoneOffset() * 60000);
+        const todayEndUTC = new Date(todayEnd.getTime() - saoPauloTime.getTimezoneOffset() * 60000);
+
+        const { data: events, error } = await supabase
+            .from('calendar_events')
+            .select(`
+                id,
+                title,
+                description,
+                start_datetime,
+                end_datetime,
+                mentorado_id,
+                lead_id,
+                mensagem_enviada,
+                mentorados (
+                    nome_completo,
+                    telefone
+                ),
+                leads (
+                    nome,
+                    telefone
+                )
+            `)
+            .gte('start_datetime', todayStartUTC.toISOString())
+            .lte('start_datetime', todayEndUTC.toISOString())
+            .order('start_datetime');
+
+        if (error) {
+            console.error('Erro ao buscar eventos:', error);
+            return [];
+        }
+
+        return events || [];
+    } catch (error) {
+        console.error('Erro na consulta de eventos:', error);
+        return [];
+    }
+}
+
+// Função para enviar mensagem via WhatsApp (usando sessão default)
+async function sendWhatsAppMessage(phoneNumber, message) {
+    const defaultSession = userSessions.get(defaultUserId);
+
+    if (!defaultSession || !defaultSession.sock || !defaultSession.isReady) {
+        console.error('Cliente WhatsApp default não está conectado');
+        return false;
+    }
+
+    try {
+        // Garantir que o número tenha o formato correto
+        let formattedNumber = phoneNumber.replace(/\D/g, '');
+        if (!formattedNumber.endsWith('@s.whatsapp.net')) {
+            formattedNumber += '@s.whatsapp.net';
+        }
+
+        await defaultSession.sock.sendMessage(formattedNumber, { text: message });
+        console.log(`📱 Mensagem enviada para: ${phoneNumber}`);
+        return true;
+    } catch (error) {
+        console.error(`❌ Erro ao enviar mensagem para ${phoneNumber}:`, error);
+        return false;
+    }
+}
+
+// Função principal de verificação e envio de notificações
+async function checkAndSendNotifications(isDailySummary = false) {
+    try {
+        console.log(`🔍 ${isDailySummary ? 'Enviando resumo diário' : 'Verificando notificações'} - ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`);
+
+        const events = await getEventsForToday();
+        console.log(`📅 Eventos encontrados hoje: ${events.length}`);
+
+        if (events.length === 0) {
+            console.log('ℹ️ Nenhum evento encontrado para hoje.');
+            return;
+        }
+
+        let notificationsSent = 0;
+        const saoPauloNow = new Date(getSaoPauloTime());
+
+        // Resumo diário às 7h da manhã
+        if (isDailySummary) {
+            console.log('🌅 Enviando resumo diário dos compromissos...');
+
+            if (events.length > 0) {
+                let summaryMessage = `🌅 Bom dia! Aqui estão seus compromissos de hoje:\n\n`;
+
+                for (const event of events) {
+                    const eventTime = new Date(event.start_datetime);
+                    const timeStr = eventTime.toLocaleTimeString('pt-BR', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        timeZone: 'America/Sao_Paulo'
+                    });
+
+                    summaryMessage += `• ${timeStr} - ${event.title}`;
+                    if (event.mentorado_id && event.mentorados) {
+                        summaryMessage += ` (com ${event.mentorados.nome_completo})`;
+                    } else if (event.lead_id && event.leads) {
+                        summaryMessage += ` (com ${event.leads.nome} - lead)`;
+                    }
+                    summaryMessage += '\n';
+                }
+
+                summaryMessage += '\nTenha um ótimo dia! 🚀';
+
+                const sent = await sendWhatsAppMessage(adminPhone, summaryMessage);
+                if (sent) {
+                    console.log('✅ Resumo diário enviado com sucesso!');
+                    notificationsSent++;
+                }
+            } else {
+                console.log('ℹ️ Nenhum evento hoje para enviar resumo.');
+            }
+            return;
+        }
+
+        // Verificações de lembretes (apenas 30 minutos antes)
+        for (const event of events) {
+            const eventStart = new Date(event.start_datetime);
+            // Converter para horário de São Paulo
+            const eventSaoPaulo = new Date(eventStart.toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
+            const timeDiffMinutes = (eventSaoPaulo - saoPauloNow) / (1000 * 60);
+
+            // Enviar apenas lembrete de 30 minutos (mais preciso: entre 28 e 32 minutos)
+            if (timeDiffMinutes >= 28 && timeDiffMinutes <= 32) {
+                // Verificar se já enviou mensagem para este evento (campo direto na tabela)
+                if (event.mensagem_enviada) {
+                    console.log(`⏭️ Lembrete já enviado para: ${event.title} - campo mensagem_enviada = true`);
+                    continue;
+                }
+
+                console.log(`⏰ Enviando lembrete de 30min para: ${event.title} (diff: ${Math.round(timeDiffMinutes)}min)`);
+
+                // Marcar como enviado ANTES de enviar mensagem
+                const marked = await markEventMessageSent(event.id);
+                if (!marked) {
+                    console.log(`❌ Falha ao marcar evento ${event.id} como enviado. Pulando para evitar spam.`);
+                    continue;
+                }
+
+                // Para mentorado
+                if (event.mentorado_id && event.mentorados && event.mentorados.telefone) {
+                    const message = `Oi ${event.mentorados.nome_completo}! Falta meia hora para nossa call 🙌\n\n` +
+                                  `Prepare um lugar tranquilo para que a gente possa mergulhar de verdade no seu cenário e já construir juntos os primeiros passos rumo à sua liberdade e transformação. 🚀`;
+
+                    const sent = await sendWhatsAppMessage(event.mentorados.telefone, message);
+                    if (sent) {
+                        notificationsSent++;
+                        console.log(`✅ Lembrete enviado para mentorado: ${event.mentorados.nome_completo}`);
+                    }
+                }
+
+                // Para lead (mesmo tipo de mensagem)
+                console.log(`🔍 Debug lead - event.lead_id: ${event.lead_id}, event.leads: ${JSON.stringify(event.leads)}`);
+
+                if (event.lead_id && event.leads && event.leads.telefone) {
+                    console.log(`📱 Enviando mensagem para lead: ${event.leads.nome} (${event.leads.telefone})`);
+
+                    const message = `Oi ${event.leads.nome}! Falta meia hora para nossa call 🙌\n\n` +
+                                  `Prepare um lugar tranquilo para que a gente possa mergulhar de verdade no seu cenário e já construir juntos os primeiros passos rumo à sua liberdade e transformação. 🚀`;
+
+                    const sent = await sendWhatsAppMessage(event.leads.telefone, message);
+                    if (sent) {
+                        notificationsSent++;
+                        console.log(`✅ Lembrete enviado para lead: ${event.leads.nome}`);
+                    } else {
+                        console.log(`❌ Falha ao enviar lembrete para lead: ${event.leads.nome}`);
+                    }
+                } else {
+                    console.log(`⏭️ Pulando lead - Motivo: lead_id=${!!event.lead_id}, leads=${!!event.leads}, telefone=${event.leads?.telefone}`);
+                }
+
+                // Para admin
+                let adminMessage = '';
+                if (event.mentorado_id && event.mentorados) {
+                    adminMessage = `📅 Lembrete: Call com ${event.mentorados.nome_completo} (mentorado) em 30 minutos!\n\nEvento: ${event.title}`;
+                } else if (event.lead_id && event.leads) {
+                    adminMessage = `📅 Lembrete: Call com ${event.leads.nome} (lead) em 30 minutos!\n\nEvento: ${event.title}`;
+                } else {
+                    adminMessage = `📅 Lembrete: ${event.title} em 30 minutos!`;
+                }
+
+                if (event.description) {
+                    adminMessage += `\n\nDescrição: ${event.description}`;
+                }
+
+                const sentAdmin = await sendWhatsAppMessage(adminPhone, adminMessage);
+                if (sentAdmin) {
+                    notificationsSent++;
+                    console.log(`✅ Lembrete enviado para admin sobre: ${event.title}`);
+                }
+            }
+        }
+
+        console.log(`✅ Verificação concluída. ${notificationsSent} notificações enviadas.`);
+
+    } catch (error) {
+        console.error('❌ Erro na verificação de notificações:', error);
+    }
+}
+
+// Configurar cron jobs
+function setupCronJobs() {
+    // Job principal: verificar a cada 2 minutos para lembretes de 30min
+    cron.schedule('*/2 * * * *', () => {
+        checkAndSendNotifications(false);
+    });
+
+    // Job para resumo diário às 7h da manhã (horário de São Paulo)
+    cron.schedule('0 7 * * *', () => {
+        console.log('🌅 Enviando resumo diário dos compromissos...');
+        checkAndSendNotifications(true);
+    }, {
+        timezone: "America/Sao_Paulo"
+    });
+
+    console.log('⏰ Cron jobs configurados:');
+    console.log('   - Verificação de lembretes a cada 2 minutos (30min antes)');
+    console.log('   - Resumo diário às 7h da manhã (horário de São Paulo)');
+}
+
+// Endpoint para testar notificações manualmente
+app.post('/test-notifications', async (req, res) => {
+    const { isDailySummary } = req.body;
+    console.log('🧪 Testando sistema de notificações...');
+    await checkAndSendNotifications(isDailySummary || false);
+    res.json({ success: true, message: `Teste de ${isDailySummary ? 'resumo diário' : 'notificações'} executado` });
+});
+
+// Endpoint para debug de eventos com leads
+app.get('/debug/events', async (req, res) => {
+    try {
+        const events = await getEventsForToday();
+
+        console.log('🔍 Debug - Total eventos encontrados:', events.length);
+
+        const debugInfo = events.map(event => ({
+            id: event.id,
+            title: event.title,
+            start_datetime: event.start_datetime,
+            mensagem_enviada: event.mensagem_enviada,
+            mentorado: {
+                id: event.mentorado_id,
+                nome: event.mentorados?.nome_completo,
+                telefone: event.mentorados?.telefone
+            },
+            lead: {
+                id: event.lead_id,
+                nome: event.leads?.nome,
+                telefone: event.leads?.telefone
+            }
+        }));
+
+        console.log('📊 Debug eventos:', JSON.stringify(debugInfo, null, 2));
+
+        res.json({
+            success: true,
+            total: events.length,
+            events: debugInfo
+        });
+    } catch (error) {
+        console.error('❌ Erro no debug:', error);
+        res.json({ success: false, error: error.message });
+    }
+});
+
+// Endpoint para listar eventos de hoje
+app.get('/events/today', async (req, res) => {
+    try {
+        const events = await getEventsForToday();
+        res.json({ success: true, data: events });
+    } catch (error) {
+        res.json({ success: false, error: 'Erro ao buscar eventos' });
+    }
+});
+
 app.listen(port, async () => {
     console.log(`🚀 WhatsApp Multi-User Baileys API rodando em http://localhost:${port}`);
     console.log(`👥 Sistema preparado para múltiplos usuários`);
