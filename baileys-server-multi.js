@@ -1596,16 +1596,14 @@ function setupCronJobs() {
     });
 
     // Job para resumo diário às 7h da manhã (horário de São Paulo)
-    cron.schedule('0 7 * * *', () => {
+    cron.schedule('0 4 * * *', () => {
         console.log('🌅 Enviando resumo diário dos compromissos...');
         checkAndSendNotifications(true);
-    }, {
-        timezone: "America/Sao_Paulo"
     });
 
     console.log('⏰ Cron jobs configurados:');
     console.log('   - Verificação de lembretes a cada 2 minutos (30min antes)');
-    console.log('   - Resumo diário às 7h da manhã (horário de São Paulo)');
+    console.log('   - Resumo diário às 4h UTC (7h São Paulo)');
 }
 
 // Endpoint para testar notificações manualmente
