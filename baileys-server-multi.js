@@ -1479,9 +1479,15 @@ async function checkAndSendNotifications(isDailySummary = false) {
         // Verificações de lembretes (apenas 30 minutos antes)
         for (const event of events) {
             const eventStart = new Date(event.start_datetime);
-            // Converter para horário de São Paulo
-            const eventSaoPaulo = new Date(eventStart.toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
-            const timeDiffMinutes = (eventSaoPaulo - saoPauloNow) / (1000 * 60);
+            const now = new Date();
+
+            // O evento já está em UTC, então comparar direto com UTC
+            const timeDiffMinutes = (eventStart - now) / (1000 * 60);
+
+            console.log(`🕐 Evento: ${event.title}`);
+            console.log(`   Start UTC: ${eventStart.toISOString()}`);
+            console.log(`   Now UTC: ${now.toISOString()}`);
+            console.log(`   Diff: ${Math.round(timeDiffMinutes)} minutos`);
 
             // Enviar apenas lembrete de 30 minutos (mais preciso: entre 28 e 32 minutos)
             if (timeDiffMinutes >= 28 && timeDiffMinutes <= 32) {
