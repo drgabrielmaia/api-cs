@@ -1556,17 +1556,17 @@ async function checkAndSendNotifications(isDailySummary = false) {
         // Verificações de lembretes (apenas 30 minutos antes)
         for (const event of events) {
             const eventStart = new Date(event.start_datetime);
-            // Diminuir 3h do evento para converter para horário de São Paulo
-            const eventStartSP = new Date(eventStart.getTime() - 3 * 60 * 60 * 1000);
-            // Diminuir 3h do now também para comparar no horário de São Paulo
-            const nowSP = new Date(new Date().getTime() - 3 * 60 * 60 * 1000);
+
+            // Converter para horário de São Paulo corretamente
+            const eventStartSP = new Date(eventStart.toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
+            const nowSP = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
 
             const timeDiffMinutes = (eventStartSP - nowSP) / (1000 * 60);
 
             console.log(`🕐 Evento: ${event.title}`);
             console.log(`   Start UTC: ${eventStart.toISOString()}`);
-            console.log(`   Start SP: ${eventStartSP.toISOString()}`);
-            console.log(`   Now SP: ${nowSP.toISOString()}`);
+            console.log(`   Start SP: ${eventStartSP.toISOString()} (${eventStartSP.toLocaleString('pt-BR')})`);
+            console.log(`   Now SP: ${nowSP.toISOString()} (${nowSP.toLocaleString('pt-BR')})`);
             console.log(`   Diff: ${Math.round(timeDiffMinutes)} minutos`);
 
             // Enviar apenas lembrete de 30 minutos (mais preciso: entre 28 e 32 minutos)
