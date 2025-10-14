@@ -18,6 +18,38 @@ app.use(express.json());
 const userSessions = new Map(); // userId -> session data
 const userSSEClients = new Map(); // userId -> Set of SSE clients
 
+// Sistema de logs para monitoramento
+const notificationLogs = [];
+const MAX_LOGS = 100; // Manter últimos 100 logs
+
+function addNotificationLog(type, message, data = {}) {
+    const logEntry = {
+        timestamp: new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
+        type, // 'info', 'success', 'error', 'debug'
+        message,
+        data,
+        id: Date.now()
+    };
+
+    notificationLogs.unshift(logEntry);
+
+    // Manter apenas os últimos logs
+    if (notificationLogs.length > MAX_LOGS) {
+        notificationLogs.splice(MAX_LOGS);
+    }
+
+    // Log no console também
+    const emoji = {
+        'info': 'ℹ️',
+        'success': '✅',
+        'error': '❌',
+        'debug': '🔍',
+        'warning': '⚠️'
+    }[type] || '📝';
+
+    console.log(`${emoji} [${logEntry.timestamp}] ${message}`, data && Object.keys(data).length > 0 ? data : '');
+}
+
 // Configuração do Supabase
 const supabaseUrl = 'https://udzmlnnztzzwrphhizol.supabase.co';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVkem1sbm56dHp6d3JwaGhpem9sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc0MjkwNzYsImV4cCI6MjA3MzAwNTA3Nn0.KjihWHrNYxDO5ZZKpa8UYPAhw9HIU11yvAvvsNaiPZU';
@@ -1603,11 +1635,20 @@ async function checkAndSendNotifications(isDailySummary = false) {
                 }
 
                 console.log(`⏰ Enviando lembrete de 30min para: ${event.title} (diff: ${Math.round(timeDiffMinutes)}min)`);
+                addNotificationLog('info', `Iniciando envio de lembrete para evento: ${event.title}`, {
+                    eventId: event.id,
+                    title: event.title,
+                    diffMinutes: Math.round(timeDiffMinutes),
+                    startTime: eventStartSP.toLocaleString('pt-BR')
+                });
 
                 // Marcar como enviado ANTES de enviar mensagem
                 const marked = await markEventMessageSent(event.id);
                 if (!marked) {
                     console.log(`❌ Falha ao marcar evento ${event.id} como enviado. Pulando para evitar spam.`);
+                    addNotificationLog('error', `Falha ao marcar evento como enviado: ${event.title}`, {
+                        eventId: event.id
+                    });
                     continue;
                 }
 
@@ -1623,6 +1664,17 @@ async function checkAndSendNotifications(isDailySummary = false) {
                     if (sent) {
                         notificationsSent++;
                         console.log(`✅ Lembrete enviado para mentorado: ${event.mentorados.nome_completo}`);
+                        addNotificationLog('success', `Lembrete enviado para mentorado: ${event.mentorados.nome_completo}`, {
+                            eventId: event.id,
+                            phone: normalizedPhone,
+                            type: 'mentorado'
+                        });
+                    } else {
+                        addNotificationLog('error', `Falha ao enviar lembrete para mentorado: ${event.mentorados.nome_completo}`, {
+                            eventId: event.id,
+                            phone: normalizedPhone,
+                            type: 'mentorado'
+                        });
                     }
                 }
 
@@ -1641,8 +1693,18 @@ async function checkAndSendNotifications(isDailySummary = false) {
                     if (sent) {
                         notificationsSent++;
                         console.log(`✅ Lembrete enviado para lead: ${event.leads.nome_completo}`);
+                        addNotificationLog('success', `Lembrete enviado para lead: ${event.leads.nome_completo}`, {
+                            eventId: event.id,
+                            phone: normalizedPhone,
+                            type: 'lead'
+                        });
                     } else {
                         console.log(`❌ Falha ao enviar lembrete para lead: ${event.leads.nome_completo}`);
+                        addNotificationLog('error', `Falha ao enviar lembrete para lead: ${event.leads.nome_completo}`, {
+                            eventId: event.id,
+                            phone: normalizedPhone,
+                            type: 'lead'
+                        });
                     }
                 } else {
                     console.log(`⏭️ Pulando lead - Motivo: lead_id=${!!event.lead_id}, leads=${!!event.leads}, telefone=${event.leads?.telefone}`);
@@ -1666,14 +1728,34 @@ async function checkAndSendNotifications(isDailySummary = false) {
                 if (sentAdmin) {
                     notificationsSent++;
                     console.log(`✅ Lembrete enviado para admin sobre: ${event.title}`);
+                    addNotificationLog('success', `Lembrete enviado para admin sobre: ${event.title}`, {
+                        eventId: event.id,
+                        phone: adminPhone,
+                        type: 'admin'
+                    });
+                } else {
+                    addNotificationLog('error', `Falha ao enviar lembrete para admin sobre: ${event.title}`, {
+                        eventId: event.id,
+                        phone: adminPhone,
+                        type: 'admin'
+                    });
                 }
             }
         }
 
         console.log(`✅ Verificação concluída. ${notificationsSent} notificações enviadas.`);
+        addNotificationLog('info', `Verificação de notificações concluída`, {
+            totalEventos: events.length,
+            notificacoesEnviadas: notificationsSent,
+            isDailySummary
+        });
 
     } catch (error) {
         console.error('❌ Erro na verificação de notificações:', error);
+        addNotificationLog('error', `Erro na verificação de notificações: ${error.message}`, {
+            error: error.message,
+            stack: error.stack
+        });
     }
 }
 
@@ -1681,18 +1763,26 @@ async function checkAndSendNotifications(isDailySummary = false) {
 function setupCronJobs() {
     // Job principal: verificar a cada 2 minutos para lembretes de 30min
     cron.schedule('*/2 * * * *', () => {
+        addNotificationLog('debug', 'Executando verificação automática de lembretes (30min)');
         checkAndSendNotifications(false);
     });
 
     // Job para resumo diário às 7h da manhã (horário de São Paulo)
     cron.schedule('0 4 * * *', () => {
         console.log('🌅 Enviando resumo diário dos compromissos...');
+        addNotificationLog('info', 'Executando resumo diário dos compromissos (7h SP)');
         checkAndSendNotifications(true);
     });
 
     console.log('⏰ Cron jobs configurados:');
     console.log('   - Verificação de lembretes a cada 2 minutos (30min antes)');
     console.log('   - Resumo diário às 4h UTC (7h São Paulo)');
+    addNotificationLog('success', 'Sistema de cron jobs configurado e ativo', {
+        jobs: [
+            'Verificação de lembretes a cada 2 minutos',
+            'Resumo diário às 7h (São Paulo)'
+        ]
+    });
 }
 
 // Endpoint para testar notificações manualmente
@@ -1922,14 +2012,331 @@ app.get('/debug/timezone', async (req, res) => {
     }
 });
 
+// Endpoint web para visualizar logs de notificações
+app.get('/logs/notifications', (req, res) => {
+    try {
+        // Página HTML simples para visualizar logs em tempo real
+        const html = `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monitor de Notificações - Dr. Gabriel Maia</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+            color: #333;
+        }
+        .header {
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .header h1 {
+            margin: 0;
+            color: #2563eb;
+            font-size: 24px;
+        }
+        .header p {
+            margin: 5px 0 0 0;
+            color: #666;
+        }
+        .status {
+            display: flex;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .status-item {
+            background: #fff;
+            padding: 15px;
+            border-radius: 6px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            flex: 1;
+        }
+        .status-item h3 {
+            margin: 0 0 5px 0;
+            font-size: 14px;
+            color: #666;
+            text-transform: uppercase;
+        }
+        .status-item .value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2563eb;
+        }
+        .logs-container {
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        .logs-header {
+            padding: 20px;
+            border-bottom: 1px solid #e5e5e5;
+            background: #f8f9fa;
+            border-radius: 8px 8px 0 0;
+        }
+        .logs-header h2 {
+            margin: 0;
+            font-size: 18px;
+            color: #333;
+        }
+        .controls {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+        }
+        button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .btn-primary {
+            background: #2563eb;
+            color: white;
+        }
+        .btn-secondary {
+            background: #6b7280;
+            color: white;
+        }
+        .log-entry {
+            padding: 15px 20px;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background-color 0.2s;
+        }
+        .log-entry:hover {
+            background: #f8f9fa;
+        }
+        .log-entry.success {
+            border-left: 4px solid #10b981;
+        }
+        .log-entry.error {
+            border-left: 4px solid #ef4444;
+        }
+        .log-entry.info {
+            border-left: 4px solid #3b82f6;
+        }
+        .log-entry.debug {
+            border-left: 4px solid #8b5cf6;
+        }
+        .log-time {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        .log-type {
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            text-transform: uppercase;
+            font-weight: bold;
+            margin-right: 8px;
+        }
+        .log-type.success { background: #dcfce7; color: #166534; }
+        .log-type.error { background: #fef2f2; color: #991b1b; }
+        .log-type.info { background: #dbeafe; color: #1e40af; }
+        .log-type.debug { background: #f3e8ff; color: #7c3aed; }
+        .log-message {
+            margin: 5px 0;
+            line-height: 1.4;
+        }
+        .log-data {
+            font-size: 12px;
+            color: #666;
+            font-family: 'Monaco', 'Menlo', monospace;
+            background: #f8f9fa;
+            padding: 8px;
+            border-radius: 4px;
+            margin-top: 8px;
+            white-space: pre-wrap;
+        }
+        .auto-refresh {
+            color: #10b981;
+            font-weight: bold;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📱 Monitor de Notificações WhatsApp</h1>
+        <p>Sistema de agendamentos - Dr. Gabriel Maia</p>
+        <div class="status">
+            <div class="status-item">
+                <h3>Status do Sistema</h3>
+                <div class="value" id="systemStatus">🟢 Online</div>
+            </div>
+            <div class="status-item">
+                <h3>Total de Logs</h3>
+                <div class="value" id="totalLogs">0</div>
+            </div>
+            <div class="status-item">
+                <h3>Última Atualização</h3>
+                <div class="value" id="lastUpdate">--:--</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="logs-container">
+        <div class="logs-header">
+            <h2>📋 Logs de Notificações (30min antes)</h2>
+            <div class="controls">
+                <button class="btn-primary" onclick="refreshLogs()">🔄 Atualizar</button>
+                <button class="btn-secondary" onclick="clearLogs()">🗑️ Limpar</button>
+                <button class="btn-primary" onclick="toggleAutoRefresh()" id="autoRefreshBtn">
+                    ⏱️ Auto-refresh: OFF
+                </button>
+            </div>
+        </div>
+        <div id="logsContent">
+            <div class="empty-state">
+                🔍 Carregando logs...
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let autoRefreshInterval = null;
+        let isAutoRefresh = false;
+
+        function updateStatus() {
+            document.getElementById('lastUpdate').textContent =
+                new Date().toLocaleTimeString('pt-BR');
+        }
+
+        function refreshLogs() {
+            fetch('/api/logs/notifications')
+                .then(response => response.json())
+                .then(data => {
+                    const container = document.getElementById('logsContent');
+                    const totalLogsEl = document.getElementById('totalLogs');
+
+                    if (data.success && data.logs && data.logs.length > 0) {
+                        totalLogsEl.textContent = data.logs.length;
+
+                        container.innerHTML = data.logs.map(log => {
+                            const dataStr = log.data && Object.keys(log.data).length > 0
+                                ? JSON.stringify(log.data, null, 2)
+                                : '';
+
+                            return \`
+                                <div class="log-entry \${log.type}">
+                                    <div class="log-time">⏰ \${log.timestamp}</div>
+                                    <div>
+                                        <span class="log-type \${log.type}">\${log.type}</span>
+                                        <span class="log-message">\${log.message}</span>
+                                    </div>
+                                    \${dataStr ? \`<div class="log-data">\${dataStr}</div>\` : ''}
+                                </div>
+                            \`;
+                        }).join('');
+                    } else {
+                        totalLogsEl.textContent = '0';
+                        container.innerHTML = \`
+                            <div class="empty-state">
+                                📭 Nenhum log de notificação encontrado.<br>
+                                <small>Os logs aparecerão aqui quando notificações de 30min forem processadas.</small>
+                            </div>
+                        \`;
+                    }
+
+                    updateStatus();
+                })
+                .catch(error => {
+                    console.error('Erro ao carregar logs:', error);
+                    document.getElementById('logsContent').innerHTML = \`
+                        <div class="empty-state" style="color: #ef4444;">
+                            ❌ Erro ao carregar logs: \${error.message}
+                        </div>
+                    \`;
+                });
+        }
+
+        function clearLogs() {
+            if (confirm('Tem certeza que deseja limpar todos os logs?')) {
+                fetch('/api/logs/notifications/clear', { method: 'POST' })
+                    .then(() => refreshLogs())
+                    .catch(error => console.error('Erro ao limpar logs:', error));
+            }
+        }
+
+        function toggleAutoRefresh() {
+            const btn = document.getElementById('autoRefreshBtn');
+
+            if (isAutoRefresh) {
+                clearInterval(autoRefreshInterval);
+                isAutoRefresh = false;
+                btn.textContent = '⏱️ Auto-refresh: OFF';
+                btn.className = 'btn-primary';
+            } else {
+                autoRefreshInterval = setInterval(refreshLogs, 5000); // 5 segundos
+                isAutoRefresh = true;
+                btn.textContent = '⏱️ Auto-refresh: ON';
+                btn.className = 'btn-secondary auto-refresh';
+            }
+        }
+
+        // Carregar logs inicialmente
+        refreshLogs();
+    </script>
+</body>
+</html>`;
+
+        res.send(html);
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// API endpoint para buscar logs (usado pelo frontend)
+app.get('/api/logs/notifications', (req, res) => {
+    try {
+        res.json({
+            success: true,
+            logs: notificationLogs.slice().reverse(), // Mais recentes primeiro
+            count: notificationLogs.length
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// API endpoint para limpar logs
+app.post('/api/logs/notifications/clear', (req, res) => {
+    try {
+        notificationLogs.length = 0; // Limpar array
+        addNotificationLog('info', 'Logs limpos manualmente via interface web');
+        res.json({ success: true, message: 'Logs limpos com sucesso' });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.listen(port, async () => {
-    console.log(`🚀 WhatsApp Multi-User Baileys API rodando em http://localhost:${port}`);
+    console.log(`🚀 WhatsApp Multi-User Baileys API rodando em https://api.medicosderesultado.com.br`);
     console.log(`👥 Sistema preparado para múltiplos usuários`);
-    console.log(`📱 Acesse http://localhost:${port} para ver o status`);
+    console.log(`📱 Acesse https://api.medicosderesultado.com.br para ver o status`);
     console.log(`🔧 Endpoints: /users/{userId}/register para registrar novos usuários`);
 
     // Configurar jobs após 10 segundos (dar tempo para sessões conectarem)
     setTimeout(() => {
+        addNotificationLog('success', 'Sistema de notificações WhatsApp iniciado com sucesso', {
+            port,
+            timestamp: new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+        });
         setupCronJobs();
     }, 10000);
 });
