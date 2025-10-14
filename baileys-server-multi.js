@@ -289,8 +289,8 @@ async function connectUserToWhatsApp(userId) {
 
         const messageObj = {
             id: message.key.id,
-            from: chatId,
-            to: chatId,
+            from: message.key.fromMe ? session.sock.user.id : chatId,  // Quem enviou
+            to: message.key.fromMe ? chatId : session.sock.user.id,    // Para quem foi enviado
             body: messageText,
             type: 'text',
             timestamp: Date.now(),
@@ -758,8 +758,8 @@ app.post('/users/:userId/send', async (req, res) => {
         // Create message object for sent message
         const messageObj = {
             id: sentMessage.key.id,
-            from: jid,
-            to: jid,
+            from: session.sock.user.id,  // Quem enviou (eu)
+            to: jid,                     // Para quem foi enviado
             body: message,
             type: 'text',
             timestamp: Date.now(),
@@ -904,13 +904,72 @@ app.get('/users/:userId/messages/:chatId', (req, res) => {
         return res.json({ success: true, data: [] });
     }
 
+    console.log(`📨 [${userId}] Buscando mensagens para chat: ${chatId}`);
+
+    // Buscar mensagens específicas do chat
     const chatMsgs = session.chatMessages.get(chatId) || [];
-    const limitedChatMessages = chatMsgs.slice(0, limit);
+
+    // FILTRO ADICIONAL: Garantir que as mensagens pertencem ao chat correto
+    const filteredMessages = chatMsgs.filter(message => {
+        // Para mensagens que eu enviei: verificar se o 'to' é o chat atual
+        // Para mensagens que eu recebi: verificar se o 'from' é o chat atual
+        const belongsToChat = (message.isFromMe && message.to === chatId) ||
+                             (!message.isFromMe && message.from === chatId);
+
+        if (!belongsToChat) {
+            console.log(`🚫 [${userId}] Mensagem filtrada - não pertence ao chat ${chatId}:`, {
+                id: message.id?.slice(-4),
+                from: message.from?.slice(-4),
+                to: message.to?.slice(-4),
+                isFromMe: message.isFromMe,
+                body: message.body?.substring(0, 30)
+            });
+        }
+
+        return belongsToChat;
+    });
+
+    const limitedChatMessages = filteredMessages.slice(0, limit);
+
+    console.log(`✅ [${userId}] Retornando ${limitedChatMessages.length} mensagens para ${chatId} (${chatMsgs.length} total, ${filteredMessages.length} filtradas)`);
 
     res.json({
         success: true,
         data: limitedChatMessages
     });
+});
+
+// Clear corrupted messages data
+app.post('/users/:userId/clear-messages', async (req, res) => {
+    const { userId } = req.params;
+    const session = getSession(userId);
+
+    if (!session) {
+        return res.json({ success: false, error: 'Sessão não encontrada' });
+    }
+
+    try {
+        console.log(`🧹 [${userId}] Limpando dados de mensagens corrompidos...`);
+
+        // Limpar mensagens em memória
+        session.messagesList = [];
+        session.chatMessages.clear();
+
+        // Limpar arquivos de mensagens
+        if (fs.existsSync(session.messagesFile)) {
+            fs.unlinkSync(session.messagesFile);
+            console.log(`🗑️ [${userId}] Arquivo de mensagens removido`);
+        }
+
+        // Salvar dados limpos
+        saveUserMessages(session);
+
+        console.log(`✅ [${userId}] Dados de mensagens limpos com sucesso`);
+        res.json({ success: true, message: 'Dados de mensagens limpos' });
+    } catch (error) {
+        console.error(`❌ [${userId}] Erro ao limpar mensagens:`, error);
+        res.json({ success: false, error: 'Erro ao limpar mensagens' });
+    }
 });
 
 // Reset user session (clear corrupted data)
