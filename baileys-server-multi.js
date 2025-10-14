@@ -1410,6 +1410,31 @@ function getSaoPauloTime() {
     return new Date().toLocaleString("en-US", {timeZone: "America/Sao_Paulo"});
 }
 
+// Função para normalizar telefone brasileiro
+function normalizePhone(phone) {
+    if (!phone) return '';
+
+    // Remover todos os caracteres não numéricos
+    const cleanPhone = phone.replace(/\D/g, '');
+
+    // Se começar com 55, já está no formato internacional
+    if (cleanPhone.startsWith('55')) {
+        return cleanPhone;
+    }
+
+    // Se tem 11 dígitos (celular), adicionar 55
+    if (cleanPhone.length === 11) {
+        return `55${cleanPhone}`;
+    }
+
+    // Se tem 10 dígitos (fixo), adicionar 55
+    if (cleanPhone.length === 10) {
+        return `55${cleanPhone}`;
+    }
+
+    return cleanPhone;
+}
+
 // Função para buscar eventos do dia no Supabase com dados de leads/mentorados
 async function getEventsForToday() {
     try {
@@ -1588,10 +1613,13 @@ async function checkAndSendNotifications(isDailySummary = false) {
 
                 // Para mentorado
                 if (event.mentorado_id && event.mentorados && event.mentorados.telefone) {
+                    const normalizedPhone = normalizePhone(event.mentorados.telefone);
+                    console.log(`📞 Mentorado phone: ${event.mentorados.telefone} → normalized: ${normalizedPhone}`);
+
                     const message = `Oi ${event.mentorados.nome_completo}! Falta meia hora para nossa call 🙌\n\n` +
                                   `Prepare um lugar tranquilo para que a gente possa mergulhar de verdade no seu cenário e já construir juntos os primeiros passos rumo à sua liberdade e transformação. 🚀`;
 
-                    const sent = await sendWhatsAppMessage(event.mentorados.telefone, message);
+                    const sent = await sendWhatsAppMessage(normalizedPhone, message);
                     if (sent) {
                         notificationsSent++;
                         console.log(`✅ Lembrete enviado para mentorado: ${event.mentorados.nome_completo}`);
@@ -1602,17 +1630,19 @@ async function checkAndSendNotifications(isDailySummary = false) {
                 console.log(`🔍 Debug lead - event.lead_id: ${event.lead_id}, event.leads: ${JSON.stringify(event.leads)}`);
 
                 if (event.lead_id && event.leads && event.leads.telefone) {
-                    console.log(`📱 Enviando mensagem para lead: ${event.leads.nome} (${event.leads.telefone})`);
+                    const normalizedPhone = normalizePhone(event.leads.telefone);
+                    console.log(`📞 Lead phone: ${event.leads.telefone} → normalized: ${normalizedPhone}`);
+                    console.log(`📱 Enviando mensagem para lead: ${event.leads.nome_completo} (${normalizedPhone})`);
 
-                    const message = `Oi ${event.leads.nome}! Falta meia hora para nossa call 🙌\n\n` +
+                    const message = `Oi ${event.leads.nome_completo}! Falta meia hora para nossa call 🙌\n\n` +
                                   `Prepare um lugar tranquilo para que a gente possa mergulhar de verdade no seu cenário e já construir juntos os primeiros passos rumo à sua liberdade e transformação. 🚀`;
 
-                    const sent = await sendWhatsAppMessage(event.leads.telefone, message);
+                    const sent = await sendWhatsAppMessage(normalizedPhone, message);
                     if (sent) {
                         notificationsSent++;
-                        console.log(`✅ Lembrete enviado para lead: ${event.leads.nome}`);
+                        console.log(`✅ Lembrete enviado para lead: ${event.leads.nome_completo}`);
                     } else {
-                        console.log(`❌ Falha ao enviar lembrete para lead: ${event.leads.nome}`);
+                        console.log(`❌ Falha ao enviar lembrete para lead: ${event.leads.nome_completo}`);
                     }
                 } else {
                     console.log(`⏭️ Pulando lead - Motivo: lead_id=${!!event.lead_id}, leads=${!!event.leads}, telefone=${event.leads?.telefone}`);
@@ -1623,7 +1653,7 @@ async function checkAndSendNotifications(isDailySummary = false) {
                 if (event.mentorado_id && event.mentorados) {
                     adminMessage = `📅 Lembrete: Call com ${event.mentorados.nome_completo} (mentorado) em 30 minutos!\n\nEvento: ${event.title}`;
                 } else if (event.lead_id && event.leads) {
-                    adminMessage = `📅 Lembrete: Call com ${event.leads.nome} (lead) em 30 minutos!\n\nEvento: ${event.title}`;
+                    adminMessage = `📅 Lembrete: Call com ${event.leads.nome_completo} (lead) em 30 minutos!\n\nEvento: ${event.title}`;
                 } else {
                     adminMessage = `📅 Lembrete: ${event.title} em 30 minutos!`;
                 }
