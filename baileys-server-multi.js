@@ -390,6 +390,66 @@ async function connectUserToWhatsApp(userId) {
         saveUserMessages(session);
         saveUserChats(session);
 
+        // Verificar se é uma resposta a botão de confirmação de call
+        if (message.message.buttonsResponseMessage) {
+            const buttonId = message.message.buttonsResponseMessage.selectedButtonId;
+            console.log(`🔘 [${userId}] Botão clicado: ${buttonId}`);
+
+            if (buttonId && buttonId.startsWith('confirm_call_')) {
+                const eventId = buttonId.replace('confirm_call_', '');
+                console.log(`✅ [${userId}] Confirmação de call recebida para evento: ${eventId}`);
+
+                // Encaminhar mensagem para admin
+                const adminPhone = '5583996910414@s.whatsapp.net';
+                const participantName = message.pushName || chatId.replace('@s.whatsapp.net', '');
+                const confirmMessage = `✅ ${participantName} confirmou presença na call (Evento ID: ${eventId})`;
+
+                try {
+                    await session.sock.sendMessage(adminPhone, { text: confirmMessage });
+                    console.log(`📤 [${userId}] Confirmação encaminhada para admin`);
+
+                    // Cancelar timeout de follow-up (isso precisaria ser implementado com um sistema de tracking)
+                    addNotificationLog('success', `Confirmação de call recebida de ${participantName}`, {
+                        eventId,
+                        participantPhone: chatId,
+                        participantName
+                    });
+                } catch (error) {
+                    console.error(`❌ [${userId}] Erro ao encaminhar confirmação para admin:`, error);
+                    addNotificationLog('error', `Erro ao encaminhar confirmação para admin`, {
+                        eventId,
+                        participantPhone: chatId,
+                        error: error.message
+                    });
+                }
+            }
+        }
+
+        // Verificar se é mensagem qualquer enviada em resposta (também deve encaminhar para admin)
+        if (!message.key.fromMe && messageText && messageText.length > 0) {
+            // Se a mensagem não é de bot/automação, encaminhar para admin
+            const adminPhone = '5583996910414@s.whatsapp.net';
+            const participantName = message.pushName || chatId.replace('@s.whatsapp.net', '');
+            const forwardMessage = `💬 Mensagem de ${participantName}:\n"${messageText}"`;
+
+            try {
+                await session.sock.sendMessage(adminPhone, { text: forwardMessage });
+                console.log(`📤 [${userId}] Mensagem encaminhada para admin`);
+
+                addNotificationLog('info', `Mensagem encaminhada para admin de ${participantName}`, {
+                    participantPhone: chatId,
+                    participantName,
+                    message: messageText
+                });
+            } catch (error) {
+                console.error(`❌ [${userId}] Erro ao encaminhar mensagem para admin:`, error);
+                addNotificationLog('error', `Erro ao encaminhar mensagem para admin`, {
+                    participantPhone: chatId,
+                    error: error.message
+                });
+            }
+        }
+
         // Send events to user's clients
         sendEventToUserClients(userId, 'new_message', messageObj);
         sendEventToUserClients(userId, 'chats_updated', session.allChats);
@@ -1657,10 +1717,27 @@ async function checkAndSendNotifications(isDailySummary = false) {
                     const normalizedPhone = normalizePhone(event.mentorados.telefone);
                     console.log(`📞 Mentorado phone: ${event.mentorados.telefone} → normalized: ${normalizedPhone}`);
 
-                    const message = `Oi ${event.mentorados.nome_completo}! Falta meia hora para nossa call 🙌\n\n` +
-                                  `Prepare um lugar tranquilo para que a gente possa mergulhar de verdade no seu cenário e já construir juntos os primeiros passos rumo à sua liberdade e transformação. 🚀`;
+                    const message = `Olá ${event.mentorados.nome_completo}, faltam 30 minutos para nossa call!\nPor aqui já está tudo pronto.\nEm breve iremos te enviar o link pelo WhatsApp. Nos vemos em breve. 🫡`;
 
-                    const sent = await sendWhatsAppMessage(normalizedPhone, message);
+                    const messageWithButton = {
+                        text: message,
+                        buttons: [{
+                            buttonId: `confirm_call_${event.id}`,
+                            buttonText: { displayText: 'Tudo certo!' },
+                            type: 1
+                        }],
+                        headerType: 1
+                    };
+
+                    const sent = await sendWhatsAppMessage(normalizedPhone, messageWithButton);
+
+                    // Agendar mensagem de follow-up em 10 minutos se não receber resposta
+                    setTimeout(async () => {
+                        // Verificar se ainda não recebeu resposta
+                        const followUpMessage = "É importante que você clique no botão acima.";
+                        await sendWhatsAppMessage(normalizedPhone, followUpMessage);
+                    }, 10 * 60 * 1000); // 10 minutos
+
                     if (sent) {
                         notificationsSent++;
                         console.log(`✅ Lembrete enviado para mentorado: ${event.mentorados.nome_completo}`);
@@ -1686,10 +1763,27 @@ async function checkAndSendNotifications(isDailySummary = false) {
                     console.log(`📞 Lead phone: ${event.leads.telefone} → normalized: ${normalizedPhone}`);
                     console.log(`📱 Enviando mensagem para lead: ${event.leads.nome_completo} (${normalizedPhone})`);
 
-                    const message = `Oi ${event.leads.nome_completo}! Falta meia hora para nossa call 🙌\n\n` +
-                                  `Prepare um lugar tranquilo para que a gente possa mergulhar de verdade no seu cenário e já construir juntos os primeiros passos rumo à sua liberdade e transformação. 🚀`;
+                    const message = `Olá ${event.leads.nome_completo}, faltam 30 minutos para nossa call!\nPor aqui já está tudo pronto.\nEm breve iremos te enviar o link pelo WhatsApp. Nos vemos em breve. 🫡`;
 
-                    const sent = await sendWhatsAppMessage(normalizedPhone, message);
+                    const messageWithButton = {
+                        text: message,
+                        buttons: [{
+                            buttonId: `confirm_call_${event.id}`,
+                            buttonText: { displayText: 'Tudo certo!' },
+                            type: 1
+                        }],
+                        headerType: 1
+                    };
+
+                    const sent = await sendWhatsAppMessage(normalizedPhone, messageWithButton);
+
+                    // Agendar mensagem de follow-up em 10 minutos se não receber resposta
+                    setTimeout(async () => {
+                        // Verificar se ainda não recebeu resposta
+                        const followUpMessage = "É importante que você clique no botão acima.";
+                        await sendWhatsAppMessage(normalizedPhone, followUpMessage);
+                    }, 10 * 60 * 1000); // 10 minutos
+
                     if (sent) {
                         notificationsSent++;
                         console.log(`✅ Lembrete enviado para lead: ${event.leads.nome_completo}`);

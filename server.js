@@ -86,6 +86,44 @@ function initializeClient() {
         console.log('IsFromMe:', msg.fromMe);
         console.log('=============================');
 
+        // Verificar se é uma resposta a botão de confirmação de call
+        if (msg.type === 'buttons_response') {
+            const buttonId = msg.selectedButtonId;
+            console.log(`🔘 Botão clicado: ${buttonId}`);
+
+            if (buttonId && buttonId.startsWith('confirm_call_')) {
+                const eventId = buttonId.replace('confirm_call_', '');
+                console.log(`✅ Confirmação de call recebida para evento: ${eventId}`);
+
+                // Encaminhar mensagem para admin
+                const contact = await msg.getContact();
+                const participantName = contact.pushname || contact.name || msg.from.replace('@c.us', '');
+                const confirmMessage = `✅ ${participantName} confirmou presença na call (Evento ID: ${eventId})`;
+
+                try {
+                    await client.sendMessage('5583996910414@c.us', confirmMessage);
+                    console.log(`📤 Confirmação encaminhada para admin`);
+                } catch (error) {
+                    console.error(`❌ Erro ao encaminhar confirmação para admin:`, error);
+                }
+            }
+        }
+
+        // Verificar se é mensagem qualquer enviada em resposta (também deve encaminhar para admin)
+        if (!msg.fromMe && msg.body && msg.body.length > 0) {
+            // Se a mensagem não é de bot/automação, encaminhar para admin
+            const contact = await msg.getContact();
+            const participantName = contact.pushname || contact.name || msg.from.replace('@c.us', '');
+            const forwardMessage = `💬 Mensagem de ${participantName}:\n"${msg.body}"`;
+
+            try {
+                await client.sendMessage('5583996910414@c.us', forwardMessage);
+                console.log(`📤 Mensagem encaminhada para admin`);
+            } catch (error) {
+                console.error(`❌ Erro ao encaminhar mensagem para admin:`, error);
+            }
+        }
+
         if (!msg.fromMe && msg.body.toLowerCase().includes('ping')) {
             try {
                 console.log('🏓 Respondendo com pong...');
@@ -445,10 +483,27 @@ async function checkAndSendNotifications(isDailySummary = false) {
 
                 // Para mentorado
                 if (event.mentorado_id && event.mentorados && event.mentorados.telefone) {
-                    const message = `Oi ${event.mentorados.nome_completo}! Falta meia hora para nossa call 🙌\n\n` +
-                                  `Prepare um lugar tranquilo para que a gente possa mergulhar de verdade no seu cenário e já construir juntos os primeiros passos rumo à sua liberdade e transformação. 🚀`;
+                    const message = `Olá ${event.mentorados.nome_completo}, faltam 30 minutos para nossa call!\nPor aqui já está tudo pronto.\nEm breve iremos te enviar o link pelo WhatsApp. Nos vemos em breve. 🫡`;
 
-                    const sent = await sendWhatsAppMessage(event.mentorados.telefone, message);
+                    const messageWithButton = {
+                        text: message,
+                        buttons: [{
+                            buttonId: `confirm_call_${event.id}`,
+                            buttonText: { displayText: 'Tudo certo!' },
+                            type: 1
+                        }],
+                        headerType: 1
+                    };
+
+                    const sent = await sendWhatsAppMessage(event.mentorados.telefone, messageWithButton);
+
+                    // Agendar mensagem de follow-up em 10 minutos se não receber resposta
+                    setTimeout(async () => {
+                        // Verificar se ainda não recebeu resposta
+                        const followUpMessage = "É importante que você clique no botão acima.";
+                        await sendWhatsAppMessage(event.mentorados.telefone, followUpMessage);
+                    }, 10 * 60 * 1000); // 10 minutos
+
                     if (sent) {
                         notificationsSent++;
                         console.log(`✅ Lembrete enviado para mentorado: ${event.mentorados.nome_completo}`);
@@ -461,10 +516,27 @@ async function checkAndSendNotifications(isDailySummary = false) {
                 if (event.lead_id && event.leads && event.leads.telefone) {
                     console.log(`📱 Enviando mensagem para lead: ${event.leads.nome} (${event.leads.telefone})`);
 
-                    const message = `Oi ${event.leads.nome}! Falta meia hora para nossa call 🙌\n\n` +
-                                  `Prepare um lugar tranquilo para que a gente possa mergulhar de verdade no seu cenário e já construir juntos os primeiros passos rumo à sua liberdade e transformação. 🚀`;
+                    const message = `Olá ${event.leads.nome}, faltam 30 minutos para nossa call!\nPor aqui já está tudo pronto.\nEm breve iremos te enviar o link pelo WhatsApp. Nos vemos em breve. 🫡`;
 
-                    const sent = await sendWhatsAppMessage(event.leads.telefone, message);
+                    const messageWithButton = {
+                        text: message,
+                        buttons: [{
+                            buttonId: `confirm_call_${event.id}`,
+                            buttonText: { displayText: 'Tudo certo!' },
+                            type: 1
+                        }],
+                        headerType: 1
+                    };
+
+                    const sent = await sendWhatsAppMessage(event.leads.telefone, messageWithButton);
+
+                    // Agendar mensagem de follow-up em 10 minutos se não receber resposta
+                    setTimeout(async () => {
+                        // Verificar se ainda não recebeu resposta
+                        const followUpMessage = "É importante que você clique no botão acima.";
+                        await sendWhatsAppMessage(event.leads.telefone, followUpMessage);
+                    }, 10 * 60 * 1000); // 10 minutos
+
                     if (sent) {
                         notificationsSent++;
                         console.log(`✅ Lembrete enviado para lead: ${event.leads.nome}`);
