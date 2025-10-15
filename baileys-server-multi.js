@@ -2441,6 +2441,39 @@ app.post('/api/logs/notifications/clear', (req, res) => {
     }
 });
 
+// Endpoint para testar botões seguindo formato exato do ChatGPT
+app.post('/test-button', async (req, res) => {
+    const { to } = req.body;
+    const defaultSession = userSessions.get(defaultUserId);
+
+    if (!defaultSession || !defaultSession.sock || !defaultSession.isReady) {
+        return res.json({
+            success: false,
+            error: 'WhatsApp não está conectado'
+        });
+    }
+
+    try {
+        let jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
+
+        const buttonMessage = {
+            text: "🎯 TESTE DIRETO - Deseja confirmar esta ação?",
+            footer: "Escolha uma opção:",
+            buttons: [
+                { buttonId: "confirmar", buttonText: { displayText: "✅ Confirmar" }, type: 1 },
+                { buttonId: "cancelar", buttonText: { displayText: "❌ Cancelar" }, type: 1 }
+            ],
+            headerType: 1
+        };
+
+        await defaultSession.sock.sendMessage(jid, buttonMessage);
+        res.json({ success: true, message: 'Botão enviado com sucesso!' });
+    } catch (error) {
+        console.error('Erro ao enviar botão:', error);
+        res.json({ success: false, error: error.message });
+    }
+});
+
 app.listen(port, async () => {
     console.log(`🚀 WhatsApp Multi-User Baileys API rodando em https://api.medicosderesultado.com.br`);
     console.log(`👥 Sistema preparado para múltiplos usuários`);
