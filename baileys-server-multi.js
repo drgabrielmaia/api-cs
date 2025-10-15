@@ -845,14 +845,25 @@ app.post('/users/:userId/send', async (req, res) => {
 
     try {
         let jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
-        const sentMessage = await session.sock.sendMessage(jid, { text: message });
+
+        // Se message é um objeto (com botões), usar diretamente
+        // Se é string, converter para objeto de texto
+        let messageContent;
+        if (typeof message === 'object' && message !== null) {
+            messageContent = message;
+        } else {
+            messageContent = { text: message };
+        }
+
+        const sentMessage = await session.sock.sendMessage(jid, messageContent);
 
         // Create message object for sent message
+        const messageText = typeof message === 'string' ? message : (message.text || '[Mensagem com botões]');
         const messageObj = {
             id: sentMessage.key.id,
             from: session.sock.user.id,  // Quem enviou (eu)
             to: jid,                     // Para quem foi enviado
-            body: message,
+            body: messageText,
             type: 'text',
             timestamp: Date.now(),
             isFromMe: true,
