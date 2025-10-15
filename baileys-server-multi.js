@@ -463,28 +463,56 @@ async function connectUserToWhatsApp(userId) {
             });
         }
 
-        // Verificar se é mensagem qualquer enviada em resposta (também deve encaminhar para admin)
+        // Verificar se é mensagem de confirmação (limitado a 2 mensagens por pessoa)
         if (!message.key.fromMe && messageText && messageText.length > 0) {
-            // Se a mensagem não é de bot/automação, encaminhar para admin
-            const adminPhone = '5583996910414@s.whatsapp.net';
             const participantName = message.pushName || chatId.replace('@s.whatsapp.net', '');
-            const forwardMessage = `💬 Mensagem de ${participantName}:\n"${messageText}"`;
 
-            try {
-                await session.sock.sendMessage(adminPhone, { text: forwardMessage });
-                console.log(`📤 [${userId}] Mensagem encaminhada para admin`);
+            // Verificar se esta pessoa está na lista de confirmações pendentes
+            if (pendingConfirmations.has(chatId)) {
+                const confirmationData = pendingConfirmations.get(chatId);
 
-                addNotificationLog('info', `Mensagem encaminhada para admin de ${participantName}`, {
-                    participantPhone: chatId,
-                    participantName,
-                    message: messageText
-                });
-            } catch (error) {
-                console.error(`❌ [${userId}] Erro ao encaminhar mensagem para admin:`, error);
-                addNotificationLog('error', `Erro ao encaminhar mensagem para admin`, {
-                    participantPhone: chatId,
-                    error: error.message
-                });
+                // Verificar se ainda não excedeu o limite de 2 mensagens
+                if (confirmationData.count < confirmationData.maxMessages) {
+                    confirmationData.count++;
+
+                    const adminPhone = '5583996910414@s.whatsapp.net';
+                    let adminMessage;
+
+                    // Verificar se a resposta é "OK" (confirmação)
+                    if (messageText.toLowerCase().trim() === 'ok') {
+                        adminMessage = `✅ A call de ${confirmationData.eventTime} está confirmada.\n👤 ${participantName}`;
+                        console.log(`✅ [${userId}] Confirmação OK recebida de ${participantName}`);
+                    } else {
+                        adminMessage = `💬 A call de ${confirmationData.eventTime} disse: "${messageText}"\n👤 ${participantName}`;
+                        console.log(`💬 [${userId}] Resposta personalizada de ${participantName}: ${messageText}`);
+                    }
+
+                    // Enviar para admin
+                    try {
+                        await session.sock.sendMessage(adminPhone, { text: adminMessage });
+                        console.log(`📤 [${userId}] Resposta encaminhada para admin (${confirmationData.count}/${confirmationData.maxMessages})`);
+
+                        addNotificationLog('info', `Resposta de confirmação ${confirmationData.count}/${confirmationData.maxMessages}`, {
+                            participantPhone: chatId,
+                            participantName,
+                            message: messageText,
+                            isConfirmation: messageText.toLowerCase().trim() === 'ok'
+                        });
+                    } catch (error) {
+                        console.error(`❌ [${userId}] Erro ao encaminhar para admin:`, error);
+                    }
+
+                    // Se atingiu o limite, remover da lista
+                    if (confirmationData.count >= confirmationData.maxMessages) {
+                        pendingConfirmations.delete(chatId);
+                        console.log(`🔒 [${userId}] Limite de mensagens atingido para ${participantName}. Removido da lista.`);
+                    }
+                } else {
+                    console.log(`⏭️ [${userId}] Ignorando mensagem de ${participantName} - limite excedido`);
+                }
+            } else {
+                // Pessoa não está na lista de confirmações pendentes - ignorar
+                console.log(`⏭️ [${userId}] Ignorando mensagem de ${participantName} - não está aguardando confirmação`);
             }
         }
 
@@ -2479,15 +2507,15 @@ app.post('/api/logs/notifications/clear', (req, res) => {
     }
 });
 
-// Sistema para armazenar protocolos pendentes
-const pendingProtocols = new Map();
+// Sistema para rastrear mensagens pendentes de confirmação
+const pendingConfirmations = new Map(); // { phoneNumber: { count: 0, eventTime: "X horas", maxMessages: 2 } }
 
 // Função para gerar protocolo único
 function generateProtocol() {
     return `PROT-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
-// Endpoint para testar botões com sequência completa
+// Endpoint para testar sistema de confirmação por texto
 app.post('/test-button', async (req, res) => {
     const { to } = req.body;
     const defaultSession = userSessions.get(defaultUserId);
@@ -2512,31 +2540,28 @@ app.post('/test-button', async (req, res) => {
         // 2. DELAY antes do segundo envio
         await new Promise(resolve => setTimeout(resolve, 2000)); // 2 segundos
 
-        // 3. SEGUNDO ENVIO: Mensagem com botões
-        const eventId = `event_${Date.now()}`;
-        const buttons = [
-            { index: 0, quickReplyButton: { displayText: '✅ Tudo certo!', id: `confirm_${eventId}` }},
-            { index: 1, quickReplyButton: { displayText: '❌ Cancelar', id: `cancel_${eventId}` }},
-        ];
-
-        const buttonMessage = {
-            text: 'Olá, faltam 30 minutos para nossa call!\nPor aqui já está tudo pronto.\nEm breve iremos te enviar o link pelo WhatsApp. Nos vemos em breve. 🫡',
-            footer: 'Médicos de Resultado',
-            templateButtons: buttons
-        };
+        // 3. SEGUNDO ENVIO: Mensagem pedindo confirmação por texto
+        const currentTime = new Date();
+        const eventTime = `${currentTime.getHours()}:${currentTime.getMinutes().toString().padStart(2, '0')}`;
 
         await defaultSession.sock.sendMessage(jid, {
-            text: buttonMessage.text,
-            footer: buttonMessage.footer,
-            templateButtons: buttonMessage.templateButtons
+            text: `Olá, faltam 30 minutos para nossa call!\nPor aqui já está tudo pronto.\nEm breve iremos te enviar o link pelo WhatsApp. Nos vemos em breve. 🫡\n\n📱 *Responda "OK" para confirmar sua presença.*`
         });
 
-        console.log('✅ Segunda mensagem (com botões) enviada');
+        // Registrar que estamos aguardando confirmação desta pessoa
+        pendingConfirmations.set(jid, {
+            count: 0,
+            eventTime: eventTime,
+            maxMessages: 2
+        });
+
+        console.log(`✅ Segunda mensagem enviada. Aguardando confirmação de: ${jid}`);
 
         res.json({
             success: true,
             message: 'Sequência completa enviada com sucesso!',
-            eventId: eventId
+            eventTime: eventTime,
+            awaitingConfirmation: true
         });
     } catch (error) {
         console.error('Erro ao enviar sequência:', error);
