@@ -1602,7 +1602,16 @@ async function sendWhatsAppMessage(phoneNumber, message) {
             formattedNumber += '@s.whatsapp.net';
         }
 
-        await defaultSession.sock.sendMessage(formattedNumber, { text: message });
+        // Se message é um objeto (com botões), usar diretamente
+        // Se é string, converter para objeto de texto
+        let messageContent;
+        if (typeof message === 'object' && message !== null) {
+            messageContent = message;
+        } else {
+            messageContent = { text: message };
+        }
+
+        await defaultSession.sock.sendMessage(formattedNumber, messageContent);
         console.log(`📱 Mensagem enviada para: ${phoneNumber}`);
         return true;
     } catch (error) {
