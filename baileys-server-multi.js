@@ -390,39 +390,77 @@ async function connectUserToWhatsApp(userId) {
         saveUserMessages(session);
         saveUserChats(session);
 
-        // Verificar se é uma resposta a botão de confirmação de call
-        if (message.message.buttonsResponseMessage) {
-            const buttonId = message.message.buttonsResponseMessage.selectedButtonId;
+        // Verificar se é uma resposta a botão (formato antigo e novo)
+        const isButtonResponse = message.message.buttonsResponseMessage || message.message.templateButtonReplyMessage;
+
+        if (isButtonResponse) {
+            const buttonId = message.message.buttonsResponseMessage?.selectedButtonId ||
+                            message.message.templateButtonReplyMessage?.selectedId;
+
             console.log(`🔘 [${userId}] Botão clicado: ${buttonId}`);
 
+            // Gerar protocolo único para esta resposta
+            const protocol = generateProtocol();
+            const participantName = message.pushName || chatId.replace('@s.whatsapp.net', '');
+
+            // Verificar diferentes tipos de botões
             if (buttonId && buttonId.startsWith('confirm_call_')) {
                 const eventId = buttonId.replace('confirm_call_', '');
                 console.log(`✅ [${userId}] Confirmação de call recebida para evento: ${eventId}`);
 
-                // Encaminhar mensagem para admin
+                // Responder com protocolo
+                await session.sock.sendMessage(chatId, {
+                    text: `✅ Confirmação recebida!\n\n📋 Protocolo: ${protocol}\n\nObrigado por confirmar sua presença.`
+                });
+
+                // Encaminhar para admin
                 const adminPhone = '5583996910414@s.whatsapp.net';
-                const participantName = message.pushName || chatId.replace('@s.whatsapp.net', '');
-                const confirmMessage = `✅ ${participantName} confirmou presença na call (Evento ID: ${eventId})`;
+                const confirmMessage = `✅ ${participantName} confirmou presença na call (Evento ID: ${eventId})\n📋 Protocolo: ${protocol}`;
 
                 try {
                     await session.sock.sendMessage(adminPhone, { text: confirmMessage });
-                    console.log(`📤 [${userId}] Confirmação encaminhada para admin`);
-
-                    // Cancelar timeout de follow-up (isso precisaria ser implementado com um sistema de tracking)
-                    addNotificationLog('success', `Confirmação de call recebida de ${participantName}`, {
-                        eventId,
-                        participantPhone: chatId,
-                        participantName
-                    });
+                    console.log(`📤 [${userId}] Confirmação encaminhada para admin com protocolo: ${protocol}`);
                 } catch (error) {
-                    console.error(`❌ [${userId}] Erro ao encaminhar confirmação para admin:`, error);
-                    addNotificationLog('error', `Erro ao encaminhar confirmação para admin`, {
-                        eventId,
-                        participantPhone: chatId,
-                        error: error.message
-                    });
+                    console.error(`❌ [${userId}] Erro ao encaminhar confirmação:`, error);
                 }
+
+            } else if (buttonId && buttonId.startsWith('confirm_')) {
+                // Novos botões de teste
+                console.log(`✅ [${userId}] Botão de confirmação clicado: ${buttonId}`);
+
+                // Responder com protocolo
+                await session.sock.sendMessage(chatId, {
+                    text: `🎯 Ação confirmada!\n\n📋 Protocolo: ${protocol}\n\nSeu clique foi registrado com sucesso.`
+                });
+
+                // Encaminhar para admin
+                const adminPhone = '5583996910414@s.whatsapp.net';
+                const confirmMessage = `🎯 ${participantName} clicou em "${buttonId}"\n📋 Protocolo: ${protocol}`;
+
+                try {
+                    await session.sock.sendMessage(adminPhone, { text: confirmMessage });
+                    console.log(`📤 [${userId}] Resposta encaminhada para admin com protocolo: ${protocol}`);
+                } catch (error) {
+                    console.error(`❌ [${userId}] Erro ao encaminhar resposta:`, error);
+                }
+
+            } else if (buttonId && buttonId.startsWith('cancel_')) {
+                // Botão de cancelamento
+                console.log(`❌ [${userId}] Botão de cancelamento clicado: ${buttonId}`);
+
+                // Responder com protocolo
+                await session.sock.sendMessage(chatId, {
+                    text: `❌ Ação cancelada.\n\n📋 Protocolo: ${protocol}\n\nSua resposta foi registrada.`
+                });
             }
+
+            // Log da resposta
+            addNotificationLog('success', `Resposta de botão recebida de ${participantName}`, {
+                buttonId,
+                protocol,
+                participantPhone: chatId,
+                participantName
+            });
         }
 
         // Verificar se é mensagem qualquer enviada em resposta (também deve encaminhar para admin)
@@ -2441,7 +2479,15 @@ app.post('/api/logs/notifications/clear', (req, res) => {
     }
 });
 
-// Endpoint para testar botões seguindo formato exato do ChatGPT
+// Sistema para armazenar protocolos pendentes
+const pendingProtocols = new Map();
+
+// Função para gerar protocolo único
+function generateProtocol() {
+    return `PROT-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
+// Endpoint para testar botões com sequência completa
 app.post('/test-button', async (req, res) => {
     const { to } = req.body;
     const defaultSession = userSessions.get(defaultUserId);
@@ -2456,14 +2502,26 @@ app.post('/test-button', async (req, res) => {
     try {
         let jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
 
+        // 1. PRIMEIRO ENVIO: Mensagem de texto prévia
+        await defaultSession.sock.sendMessage(jid, {
+            text: "Olá, segue sua notificação."
+        });
+
+        console.log('✅ Primeira mensagem enviada');
+
+        // 2. DELAY antes do segundo envio
+        await new Promise(resolve => setTimeout(resolve, 2000)); // 2 segundos
+
+        // 3. SEGUNDO ENVIO: Mensagem com botões
+        const eventId = `event_${Date.now()}`;
         const buttons = [
-            { index: 0, quickReplyButton: { displayText: '✅ Confirmar', id: 'confirmar' }},
-            { index: 1, quickReplyButton: { displayText: '❌ Cancelar', id: 'cancelar' }},
+            { index: 0, quickReplyButton: { displayText: '✅ Tudo certo!', id: `confirm_${eventId}` }},
+            { index: 1, quickReplyButton: { displayText: '❌ Cancelar', id: `cancel_${eventId}` }},
         ];
 
         const buttonMessage = {
-            text: '🎯 TESTE NOVO FORMATO - Deseja confirmar esta ação?',
-            footer: 'Escolha uma opção:',
+            text: 'Olá, faltam 30 minutos para nossa call!\nPor aqui já está tudo pronto.\nEm breve iremos te enviar o link pelo WhatsApp. Nos vemos em breve. 🫡',
+            footer: 'Médicos de Resultado',
             templateButtons: buttons
         };
 
@@ -2472,9 +2530,16 @@ app.post('/test-button', async (req, res) => {
             footer: buttonMessage.footer,
             templateButtons: buttonMessage.templateButtons
         });
-        res.json({ success: true, message: 'Botão enviado com sucesso!' });
+
+        console.log('✅ Segunda mensagem (com botões) enviada');
+
+        res.json({
+            success: true,
+            message: 'Sequência completa enviada com sucesso!',
+            eventId: eventId
+        });
     } catch (error) {
-        console.error('Erro ao enviar botão:', error);
+        console.error('Erro ao enviar sequência:', error);
         res.json({ success: false, error: error.message });
     }
 });
