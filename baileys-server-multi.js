@@ -1741,6 +1741,7 @@ async function checkAndSendNotifications(isDailySummary = false) {
 
                     const messageWithButton = {
                         text: message,
+                        footer: "Médicos de Resultado",
                         buttons: [{
                             buttonId: `confirm_call_${event.id}`,
                             buttonText: { displayText: 'Tudo certo!' },
@@ -1787,6 +1788,7 @@ async function checkAndSendNotifications(isDailySummary = false) {
 
                     const messageWithButton = {
                         text: message,
+                        footer: "Médicos de Resultado",
                         buttons: [{
                             buttonId: `confirm_call_${event.id}`,
                             buttonText: { displayText: 'Tudo certo!' },
