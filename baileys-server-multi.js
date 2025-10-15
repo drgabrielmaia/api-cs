@@ -2456,17 +2456,22 @@ app.post('/test-button', async (req, res) => {
     try {
         let jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
 
+        const buttons = [
+            { index: 0, quickReplyButton: { displayText: '✅ Confirmar', id: 'confirmar' }},
+            { index: 1, quickReplyButton: { displayText: '❌ Cancelar', id: 'cancelar' }},
+        ];
+
         const buttonMessage = {
-            text: "🎯 TESTE DIRETO - Deseja confirmar esta ação?",
-            footer: "Escolha uma opção:",
-            buttons: [
-                { buttonId: "confirmar", buttonText: { displayText: "✅ Confirmar" }, type: 1 },
-                { buttonId: "cancelar", buttonText: { displayText: "❌ Cancelar" }, type: 1 }
-            ],
-            headerType: 1
+            text: '🎯 TESTE NOVO FORMATO - Deseja confirmar esta ação?',
+            footer: 'Escolha uma opção:',
+            templateButtons: buttons
         };
 
-        await defaultSession.sock.sendMessage(jid, buttonMessage);
+        await defaultSession.sock.sendMessage(jid, {
+            text: buttonMessage.text,
+            footer: buttonMessage.footer,
+            templateButtons: buttonMessage.templateButtons
+        });
         res.json({ success: true, message: 'Botão enviado com sucesso!' });
     } catch (error) {
         console.error('Erro ao enviar botão:', error);
