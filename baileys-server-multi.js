@@ -1141,6 +1141,71 @@ app.post('/users/:userId/clear-messages', async (req, res) => {
     }
 });
 
+// Sync specific chat (force refresh a single conversation)
+app.post('/users/:userId/chats/:chatId/sync', async (req, res) => {
+    const { userId, chatId } = req.params;
+    const session = getSession(userId);
+
+    if (!session || !session.isReady || !session.sock) {
+        return res.json({
+            success: false,
+            error: 'WhatsApp não está conectado para este usuário'
+        });
+    }
+
+    try {
+        const decodedChatId = decodeURIComponent(chatId);
+        console.log(`🔄 [${userId}] Sincronizando chat específico: ${decodedChatId}`);
+
+        // Força reload das mensagens do chat específico
+        const history = await loadUserChatHistory(session, decodedChatId, 50);
+
+        // Atualizar cache de mensagens do chat
+        session.chatMessages.set(decodedChatId, history);
+
+        // Salvar dados atualizados
+        saveUserMessages(session);
+
+        // Notificar clientes SSE sobre a atualização
+        const sseClients = userSSEClients.get(userId);
+        if (sseClients && sseClients.size > 0) {
+            const notificationData = {
+                type: 'chat_updated',
+                data: {
+                    chatId: decodedChatId,
+                    messageCount: history.length
+                }
+            };
+
+            sseClients.forEach(client => {
+                try {
+                    client.write(`data: ${JSON.stringify(notificationData)}\n\n`);
+                } catch (error) {
+                    console.error(`❌ Erro ao enviar notificação SSE:`, error);
+                }
+            });
+        }
+
+        console.log(`✅ [${userId}] Chat ${decodedChatId} sincronizado com ${history.length} mensagens`);
+
+        res.json({
+            success: true,
+            message: 'Chat sincronizado com sucesso',
+            data: {
+                chatId: decodedChatId,
+                messageCount: history.length,
+                messages: history
+            }
+        });
+    } catch (error) {
+        console.error(`❌ [${userId}] Erro ao sincronizar chat ${chatId}:`, error);
+        res.json({
+            success: false,
+            error: 'Erro ao sincronizar chat'
+        });
+    }
+});
+
 // Reset user session (clear corrupted data)
 app.delete('/users/:userId/reset', async (req, res) => {
     const { userId } = req.params;
