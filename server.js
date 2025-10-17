@@ -4,6 +4,7 @@ const cors = require('cors');
 const QRCode = require('qrcode');
 const cron = require('node-cron');
 const { createClient } = require('@supabase/supabase-js');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
@@ -28,6 +29,159 @@ const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const adminPhone = '558396910414'; // Gabriel Maia
+const targetPhone = '5511986784297'; // Número que o SDR deve responder
+
+// Configuração do Gemini
+const genAI = new GoogleGenerativeAI('AIzaSyCtkT3y-NwYgNWIotoBcDxvAmIDXN10vEY');
+const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+
+// Prompt para o SDR Antiplantão
+const SDR_PROMPT = `
+Você é um SDR (Sales Development Representative) especializado do movimento ANTIPLANTÃO, criado por Gabriel Maia.
+
+CONTEXTO DO NEGÓCIO:
+- O movimento antiplantão foca em fazer com que médicos sejam bem remunerados SEM se matar de trabalhar
+- Queremos que médicos ganhem dinheiro sem precisar de plantões, PSF ou trabalhar no SUS
+- Vendemos LIBERDADE para médicos
+- O diploma mais forte do país não pode aceitar biomédico ganhando mais que médico
+- A mentoria custa R$ 40.000, mas o valor só é revelado durante a call
+
+SEU OBJETIVO PRINCIPAL:
+Convencer médicos a agendarem uma call com Gabriel Maia para conhecer o movimento antiplantão.
+
+COMO VOCÊ DEVE SE COMUNICAR:
+1. Seja direto, provocativo e persuasivo
+2. Use linguagem informal e próxima do médico
+3. Foque na DOR: médicos mal remunerados, sobrecarregados, dependentes do SUS
+4. Apresente a SOLUÇÃO: liberdade financeira através do movimento antiplantão
+5. Crie URGÊNCIA para agendar a call
+6. NÃO mencione o valor da mentoria - apenas na call
+7. Use emojis moderadamente para humanizar
+
+ESTRATÉGIA DE CONVERSÃO:
+- Identifique se a pessoa é médico
+- Desperte interesse sobre liberdade financeira
+- Gere curiosidade sobre o movimento
+- Ofereça valor exclusivo
+- Conduza para agendamento da call
+- Se houver interesse, ofereça horários concretos para agendar
+
+FRASES DE IMPACTO:
+- "Médico ganhando menos que biomédico? Isso precisa acabar!"
+- "Quantos plantões você vai fazer até aposentar?"
+- "E se eu te disser que existe um jeito de ganhar mais trabalhando menos?"
+- "Liberdade financeira é direito de quem estudou medicina"
+
+AGENDAMENTO DE CALLS:
+- Quando o prospect demonstrar interesse, ofereça horários específicos
+- Sugestões: "Que tal amanhã às 14h?" ou "Tenho uma vaga quinta às 16h"
+- Sempre pergunte nome completo e confirme o número de WhatsApp
+- Se aceitar, confirme todos os dados antes de finalizar
+
+RESPONDA SEMPRE buscando agendar uma call. Seja conversacional, natural e focado no resultado.
+
+Agora responda a mensagem a seguir como um SDR expert:
+`;
+
+// Função para verificar se número existe no WhatsApp (com e sem 9)
+async function verifyWhatsAppNumber(baseNumber) {
+    try {
+        // Remove tudo que não é número
+        const cleanNumber = baseNumber.replace(/\D/g, '');
+
+        // Formatos possíveis para números brasileiros
+        let numbersToTest = [];
+
+        if (cleanNumber.length === 10) {
+            // Número sem 9 (ex: 5511987654321 -> 11987654321)
+            numbersToTest = [
+                `${cleanNumber}`, // sem 9
+                `${cleanNumber.slice(0, 2)}9${cleanNumber.slice(2)}` // com 9
+            ];
+        } else if (cleanNumber.length === 11) {
+            // Número com 9 (ex: 5511987654321)
+            if (cleanNumber.charAt(4) === '9') {
+                numbersToTest = [
+                    `${cleanNumber}`, // com 9
+                    `${cleanNumber.slice(0, 4)}${cleanNumber.slice(5)}` // sem 9
+                ];
+            } else {
+                numbersToTest = [`${cleanNumber}`];
+            }
+        } else {
+            numbersToTest = [`${cleanNumber}`];
+        }
+
+        console.log(`🔍 Testando números: ${numbersToTest.join(', ')}`);
+
+        // Testar cada formato
+        for (const number of numbersToTest) {
+            try {
+                const whatsappId = `${number}@c.us`;
+                const isRegistered = await client.isRegisteredUser(whatsappId);
+
+                if (isRegistered) {
+                    console.log(`✅ Número encontrado: ${whatsappId}`);
+                    return whatsappId;
+                }
+
+                console.log(`❌ Número não encontrado: ${whatsappId}`);
+            } catch (checkError) {
+                console.log(`⚠️ Erro ao verificar ${number}:`, checkError.message);
+                continue;
+            }
+        }
+
+        console.log(`❌ Nenhum formato válido encontrado para: ${baseNumber}`);
+        return null;
+
+    } catch (error) {
+        console.error('❌ Erro na verificação de número:', error);
+        return null;
+    }
+}
+
+// Função para enviar mensagem com verificação automática de número
+async function sendMessageWithNumberCheck(phoneNumber, message) {
+    try {
+        const validWhatsAppId = await verifyWhatsAppNumber(phoneNumber);
+
+        if (!validWhatsAppId) {
+            console.log(`❌ Número ${phoneNumber} não possui WhatsApp`);
+            return { success: false, error: 'Número não possui WhatsApp' };
+        }
+
+        await client.sendMessage(validWhatsAppId, message);
+        console.log(`✅ Mensagem enviada para: ${validWhatsAppId}`);
+        return { success: true, whatsappId: validWhatsAppId };
+
+    } catch (error) {
+        console.error('❌ Erro ao enviar mensagem:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+// Função do SDR Antiplantão
+async function processSDRMessage(messageText, contactName) {
+    try {
+        const prompt = SDR_PROMPT + `\n\nMENSAGEM RECEBIDA: "${messageText}"\nNOME DO CONTATO: ${contactName || 'Não identificado'}\n\nResposta do SDR:`;
+
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        const text = response.text();
+
+        return text.trim();
+    } catch (error) {
+        console.error('❌ Erro ao gerar resposta do SDR:', error);
+        return `Olá! 👋 Sou do movimento ANTIPLANTÃO.
+
+Médico ganhando menos que biomédico? Isso precisa acabar!
+
+Gabriel Maia criou um método para médicos ganharem dinheiro SEM plantões, SEM PSF, SEM SUS.
+
+Quer saber como? Vamos agendar uma call rápida? 📞`;
+    }
+}
 
 // Função para marcar evento como mensagem enviada
 async function markEventMessageSent(eventId) {
@@ -109,21 +263,65 @@ function initializeClient() {
             }
         }
 
-        // Verificar se é mensagem qualquer enviada em resposta (também deve encaminhar para admin)
-        if (!msg.fromMe && msg.body && msg.body.length > 0) {
-            // Se a mensagem não é de bot/automação, encaminhar para admin
-            const contact = await msg.getContact();
-            const participantName = contact.pushname || contact.name || msg.from.replace('@c.us', '');
-            const forwardMessage = `💬 Mensagem de ${participantName}:\n"${msg.body}"`;
+        // SDR ANTIPLANTÃO - Responder apenas ao número específico
+        const cleanPhone = msg.from.replace('@c.us', '').replace('+', '');
+        console.log(`🔍 Verificando número: ${cleanPhone} vs ${targetPhone}`);
+
+        if (!msg.fromMe && msg.body && msg.body.length > 0 && cleanPhone === targetPhone) {
+            console.log(`🎯 MENSAGEM DO NÚMERO ALVO! Ativando SDR...`);
 
             try {
-                await client.sendMessage('5583996910414@c.us', forwardMessage);
+                const contact = await msg.getContact();
+                const contactName = contact.pushname || contact.name || 'Prospect';
+
+                console.log(`👤 Processando mensagem para: ${contactName}`);
+                console.log(`💬 Mensagem: "${msg.body}"`);
+
+                // Gerar resposta com Gemini SDR
+                const sdrResponse = await processSDRMessage(msg.body, contactName);
+
+                console.log(`🤖 Resposta do SDR: "${sdrResponse}"`);
+
+                // Enviar resposta
+                await msg.reply(sdrResponse);
+                console.log(`✅ Resposta SDR enviada!`);
+
+                // Notificar admin sobre a interação
+                const adminNotification = `🚀 SDR ANTIPLANTÃO ativo!\n\n👤 Prospect: ${contactName}\n📞 ${cleanPhone}\n💬 Perguntou: "${msg.body}"\n🤖 Respondi: "${sdrResponse}"`;
+                await client.sendMessage(`${adminPhone}@c.us`, adminNotification);
+
+            } catch (error) {
+                console.error('❌ Erro no SDR:', error);
+
+                // Resposta de fallback
+                const fallbackMessage = `Olá! 👋 Sou do movimento ANTIPLANTÃO.
+
+Médico ganhando menos que biomédico? Isso precisa acabar!
+
+Gabriel Maia criou um método para médicos ganharem dinheiro SEM plantões, SEM PSF, SEM SUS.
+
+Quer saber como? Vamos agendar uma call rápida? 📞`;
+
+                await msg.reply(fallbackMessage);
+                console.log(`✅ Resposta de fallback enviada!`);
+            }
+        }
+
+        // Encaminhar mensagens de outros números apenas para admin (sem resposta automática)
+        else if (!msg.fromMe && msg.body && msg.body.length > 0 && cleanPhone !== targetPhone) {
+            const contact = await msg.getContact();
+            const participantName = contact.pushname || contact.name || msg.from.replace('@c.us', '');
+            const forwardMessage = `💬 Mensagem de ${participantName} (${cleanPhone}):\n"${msg.body}"`;
+
+            try {
+                await client.sendMessage(`${adminPhone}@c.us`, forwardMessage);
                 console.log(`📤 Mensagem encaminhada para admin`);
             } catch (error) {
                 console.error(`❌ Erro ao encaminhar mensagem para admin:`, error);
             }
         }
 
+        // Comando de teste (ping)
         if (!msg.fromMe && msg.body.toLowerCase().includes('ping')) {
             try {
                 console.log('🏓 Respondendo com pong...');
@@ -191,11 +389,66 @@ app.post('/send', async (req, res) => {
     }
 
     try {
-        await client.sendMessage(to, message);
-        res.json({ success: true, message: 'Mensagem enviada com sucesso' });
+        // Usar verificação automática de número
+        const result = await sendMessageWithNumberCheck(to, message);
+
+        if (result.success) {
+            res.json({
+                success: true,
+                message: 'Mensagem enviada com sucesso',
+                whatsappId: result.whatsappId
+            });
+        } else {
+            res.json({
+                success: false,
+                error: result.error
+            });
+        }
     } catch (error) {
         console.error('Erro ao enviar mensagem:', error);
         res.json({ success: false, error: 'Erro ao enviar mensagem' });
+    }
+});
+
+// Rota para verificar se número existe no WhatsApp
+app.post('/verify-number', async (req, res) => {
+    const { phone } = req.body;
+
+    if (!isReady) {
+        return res.json({
+            success: false,
+            error: 'Cliente WhatsApp não está conectado'
+        });
+    }
+
+    if (!phone) {
+        return res.json({
+            success: false,
+            error: 'Número de telefone é obrigatório'
+        });
+    }
+
+    try {
+        const validWhatsAppId = await verifyWhatsAppNumber(phone);
+
+        if (validWhatsAppId) {
+            res.json({
+                success: true,
+                hasWhatsApp: true,
+                whatsappId: validWhatsAppId,
+                originalPhone: phone
+            });
+        } else {
+            res.json({
+                success: true,
+                hasWhatsApp: false,
+                whatsappId: null,
+                originalPhone: phone
+            });
+        }
+    } catch (error) {
+        console.error('Erro ao verificar número:', error);
+        res.json({ success: false, error: 'Erro ao verificar número' });
     }
 });
 
@@ -649,6 +902,68 @@ app.get('/events/today', async (req, res) => {
         res.json({ success: true, data: events });
     } catch (error) {
         res.json({ success: false, error: 'Erro ao buscar eventos' });
+    }
+});
+
+// Endpoint para agendar call (usado pelo SDR)
+app.post('/schedule-call', async (req, res) => {
+    try {
+        const { phone, name, date, time, notes } = req.body;
+
+        if (!phone || !name || !date || !time) {
+            return res.json({
+                success: false,
+                error: 'Dados obrigatórios: phone, name, date, time'
+            });
+        }
+
+        // Inserir agendamento na tabela calendar_events
+        const { data, error } = await supabase
+            .from('calendar_events')
+            .insert([{
+                title: `Call Antiplantão - ${name}`,
+                start_time: `${date}T${time}:00`,
+                end_time: `${date}T${time.split(':')[0]}:${parseInt(time.split(':')[1]) + 30}:00`, // +30 min
+                description: `Call agendada pelo SDR\nContato: ${phone}\nNotes: ${notes || 'Sem observações'}`,
+                created_at: new Date().toISOString(),
+                mensagem_enviada: false
+            }])
+            .select();
+
+        if (error) {
+            console.error('❌ Erro ao agendar call:', error);
+            return res.json({ success: false, error: 'Erro ao agendar call' });
+        }
+
+        // Notificar admin sobre o agendamento
+        const notification = `📅 NOVA CALL AGENDADA pelo SDR!
+
+👤 Nome: ${name}
+📞 Telefone: ${phone}
+🗓️ Data: ${date}
+⏰ Horário: ${time}
+📝 Observações: ${notes || 'Nenhuma'}
+
+ID do evento: ${data[0]?.id}`;
+
+        try {
+            await client.sendMessage(`${adminPhone}@c.us`, notification);
+        } catch (msgError) {
+            console.error('❌ Erro ao notificar admin:', msgError);
+        }
+
+        res.json({
+            success: true,
+            message: 'Call agendada com sucesso!',
+            data: {
+                eventId: data[0]?.id,
+                scheduledFor: `${date} às ${time}`
+            }
+        });
+
+    } catch (error) {
+        console.error('❌ Erro no agendamento:', error);
+        res.json({ success: false, error: 'Erro interno do servidor' });
     }
 });
 
