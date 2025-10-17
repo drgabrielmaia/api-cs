@@ -2660,38 +2660,83 @@ async function generateLeadsPDF(weeklyOnly = false) {
 
         console.log(`📋 ${leads.length} leads encontrados`);
 
-        // Gerar conteúdo do relatório
+        // Gerar PDF usando puppeteer
+        const puppeteer = require('puppeteer');
+        const browser = await puppeteer.launch({
+            headless: true,
+            args: ['--no-sandbox', '--disable-setuid-sandbox']
+        });
+        const page = await browser.newPage();
+
         const reportType = weeklyOnly ? 'Semanal' : 'Geral';
         const reportDate = new Date().toLocaleDateString('pt-BR');
 
-        let pdfContent = `📊 RELATÓRIO DE LEADS - ${reportType.toUpperCase()}\n`;
-        pdfContent += `📅 Data: ${reportDate}\n`;
-        pdfContent += `📋 Total de leads: ${leads.length}\n\n`;
+        // HTML para o PDF
+        const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body { font-family: Arial, sans-serif; margin: 20px; color: #333; }
+                .header { text-align: center; margin-bottom: 30px; }
+                .title { color: #166534; font-size: 24px; font-weight: bold; margin-bottom: 10px; }
+                .subtitle { color: #666; font-size: 14px; }
+                .info { background: #f0fdf4; padding: 15px; border-radius: 8px; margin: 20px 0; }
+                .lead { margin: 15px 0; padding: 15px; border-left: 4px solid #16a34a; background: #fafafa; }
+                .lead-name { font-weight: bold; color: #166534; margin-bottom: 5px; }
+                .lead-info { font-size: 12px; color: #666; margin: 3px 0; }
+                .separator { border-bottom: 2px solid #d4af37; margin: 20px 0; }
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <div class="title">RELATORIO DE LEADS - ${reportType.toUpperCase()}</div>
+                <div class="subtitle">Data: ${reportDate}</div>
+            </div>
 
-        if (weeklyOnly) {
-            pdfContent += `📊 LEADS DA ÚLTIMA SEMANA\n`;
-            pdfContent += `(${new Date(Date.now() - 7*24*60*60*1000).toLocaleDateString('pt-BR')} - ${reportDate})\n\n`;
-        }
+            <div class="separator"></div>
 
-        pdfContent += '═'.repeat(50) + '\n\n';
+            <div class="info">
+                <strong>Total de leads: ${leads.length}</strong><br>
+                ${weeklyOnly ? `Periodo: ${new Date(Date.now() - 7*24*60*60*1000).toLocaleDateString('pt-BR')} - ${reportDate}` : 'Relatorio geral de todos os leads'}
+            </div>
 
-        if (leads.length === 0) {
-            pdfContent += '📭 Nenhum lead encontrado no período.\n\n';
-        } else {
-            leads.forEach((lead, index) => {
-                pdfContent += `${index + 1}. *${lead.nome_completo}*\n`;
-                pdfContent += `   📍 Origem: ${lead.origem || 'Não informado'}\n`;
-                pdfContent += `   🎯 Status: ${lead.status}\n`;
-                if (lead.observacoes) {
-                    pdfContent += `   📝 Observações: ${lead.observacoes.substring(0, 100)}${lead.observacoes.length > 100 ? '...' : ''}\n`;
-                }
-                pdfContent += `   📅 Cadastrado: ${new Date(lead.created_at).toLocaleDateString('pt-BR')}\n\n`;
-            });
-        }
+            ${leads.length === 0 ?
+                '<div class="info">Nenhum lead encontrado no periodo.</div>' :
+                leads.map((lead, index) => `
+                    <div class="lead">
+                        <div class="lead-name">${index + 1}. ${lead.nome_completo}</div>
+                        <div class="lead-info">Origem: ${lead.origem || 'Nao informado'}</div>
+                        <div class="lead-info">Status: ${lead.status}</div>
+                        ${lead.observacoes ? `<div class="lead-info">Observacoes: ${lead.observacoes}</div>` : ''}
+                        <div class="lead-info">Cadastrado: ${new Date(lead.created_at).toLocaleDateString('pt-BR')}</div>
+                    </div>
+                `).join('')
+            }
+        </body>
+        </html>
+        `;
+
+        await page.setContent(htmlContent);
+        const pdfBuffer = await page.pdf({
+            format: 'A4',
+            printBackground: true,
+            margin: {
+                top: '20px',
+                bottom: '20px',
+                left: '20px',
+                right: '20px'
+            }
+        });
+
+        await browser.close();
+
+        const filename = `leads_${weeklyOnly ? 'semanal' : 'geral'}_${new Date().toISOString().split('T')[0]}.pdf`;
 
         return {
-            content: pdfContent,
-            filename: `leads_${weeklyOnly ? 'semanal' : 'geral'}_${new Date().toISOString().split('T')[0]}.txt`,
+            buffer: pdfBuffer,
+            filename,
             leadsCount: leads.length,
             reportType
         };
@@ -2720,22 +2765,36 @@ async function sendLeadsPDFToWhatsApp(phoneNumber, weeklyOnly = false) {
         // Formatar número para WhatsApp
         const jid = phoneNumber.includes('@') ? phoneNumber : `${phoneNumber}@s.whatsapp.net`;
 
-        // Enviar mensagem com relatório
-        await session.sock.sendMessage(jid, { text: pdfData.content });
+        // Primeiro enviar mensagem explicativa
+        const message = `📊 *RELATÓRIO DE LEADS - ${pdfData.reportType.toUpperCase()}*\n\n` +
+                       `📅 Data: ${new Date().toLocaleDateString('pt-BR')}\n` +
+                       `📋 Total de leads: ${pdfData.leadsCount}\n\n` +
+                       `${weeklyOnly ? '📊 Leads cadastrados na última semana' : '📊 Relatório geral de todos os leads'}\n\n` +
+                       `Arquivo PDF anexo com detalhes completos 👇`;
 
-        console.log(`✅ Relatório de leads ${pdfData.reportType} enviado para ${phoneNumber}`);
+        await session.sock.sendMessage(jid, { text: message });
 
-        addNotificationLog('success', `Relatório de leads ${pdfData.reportType} enviado via WhatsApp`, {
+        // Depois enviar o arquivo PDF
+        await session.sock.sendMessage(jid, {
+            document: pdfData.buffer,
+            fileName: pdfData.filename,
+            mimetype: 'application/pdf'
+        });
+
+        console.log(`✅ PDF de leads ${pdfData.reportType} enviado para ${phoneNumber}`);
+
+        addNotificationLog('success', `PDF de leads ${pdfData.reportType} enviado via WhatsApp`, {
             destinatario: phoneNumber,
             leadsCount: pdfData.leadsCount,
-            tipo: pdfData.reportType
+            tipo: pdfData.reportType,
+            arquivo: pdfData.filename
         });
 
         return true;
 
     } catch (error) {
-        console.error('Erro ao enviar relatório por WhatsApp:', error);
-        addNotificationLog('error', 'Erro ao enviar relatório de leads via WhatsApp', { error: error.message });
+        console.error('Erro ao enviar PDF por WhatsApp:', error);
+        addNotificationLog('error', 'Erro ao enviar PDF de leads via WhatsApp', { error: error.message });
         return false;
     }
 }
