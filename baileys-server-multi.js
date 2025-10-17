@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
 const { createClient } = require('@supabase/supabase-js');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -57,6 +58,81 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 const adminPhone = '558396910414'; // Gabriel Maia
 const defaultUserId = 'default'; // Usuário padrão para notificações
+
+// Configuração do SDR ANTIPLANTÃO
+const targetPhone = '5511986784297'; // Número que o SDR deve responder
+const genAI = new GoogleGenerativeAI('AIzaSyCtkT3y-NwYgNWIotoBcDxvAmIDXN10vEY');
+const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+
+// Prompt para o SDR Antiplantão
+const SDR_PROMPT = `
+Você é um SDR (Sales Development Representative) especializado do movimento ANTIPLANTÃO, criado por Gabriel Maia.
+
+CONTEXTO DO NEGÓCIO:
+- O movimento antiplantão foca em fazer com que médicos sejam bem remunerados SEM se matar de trabalhar
+- Queremos que médicos ganhem dinheiro sem precisar de plantões, PSF ou trabalhar no SUS
+- Vendemos LIBERDADE para médicos
+- O diploma mais forte do país não pode aceitar biomédico ganhando mais que médico
+- A mentoria custa R$ 40.000, mas o valor só é revelado durante a call
+
+SEU OBJETIVO PRINCIPAL:
+Convencer médicos a agendarem uma call com Gabriel Maia para conhecer o movimento antiplantão.
+
+COMO VOCÊ DEVE SE COMUNICAR:
+1. Seja direto, provocativo e persuasivo
+2. Use linguagem informal e próxima do médico
+3. Foque na DOR: médicos mal remunerados, sobrecarregados, dependentes do SUS
+4. Apresente a SOLUÇÃO: liberdade financeira através do movimento antiplantão
+5. Crie URGÊNCIA para agendar a call
+6. NÃO mencione o valor da mentoria - apenas na call
+7. Use emojis moderadamente para humanizar
+
+ESTRATÉGIA DE CONVERSÃO:
+- Identifique se a pessoa é médico
+- Desperte interesse sobre liberdade financeira
+- Gere curiosidade sobre o movimento
+- Ofereça valor exclusivo
+- Conduza para agendamento da call
+- Se houver interesse, ofereça horários concretos para agendar
+
+FRASES DE IMPACTO:
+- "Médico ganhando menos que biomédico? Isso precisa acabar!"
+- "Quantos plantões você vai fazer até aposentar?"
+- "E se eu te disser que existe um jeito de ganhar mais trabalhando menos?"
+- "Liberdade financeira é direito de quem estudou medicina"
+
+AGENDAMENTO DE CALLS:
+- Quando o prospect demonstrar interesse, ofereça horários específicos
+- Sugestões: "Que tal amanhã às 14h?" ou "Tenho uma vaga quinta às 16h"
+- Sempre pergunte nome completo e confirme o número de WhatsApp
+- Se aceitar, confirme todos os dados antes de finalizar
+
+RESPONDA SEMPRE buscando agendar uma call. Seja conversacional, natural e focado no resultado.
+
+Agora responda a mensagem a seguir como um SDR expert:
+`;
+
+// Função do SDR Antiplantão
+async function processSDRMessage(messageText, contactName) {
+    try {
+        const prompt = SDR_PROMPT + `\n\nMENSAGEM RECEBIDA: "${messageText}"\nNOME DO CONTATO: ${contactName || 'Não identificado'}\n\nResposta do SDR:`;
+
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        const text = response.text();
+
+        return text.trim();
+    } catch (error) {
+        addNotificationLog('error', 'Erro ao gerar resposta do SDR', { error: error.message });
+        return `Olá! 👋 Sou do movimento ANTIPLANTÃO.
+
+Médico ganhando menos que biomédico? Isso precisa acabar!
+
+Gabriel Maia criou um método para médicos ganharem dinheiro SEM plantões, SEM PSF, SEM SUS.
+
+Quer saber como? Vamos agendar uma call rápida? 📞`;
+    }
+}
 
 // Session structure: { sock, qrCodeData, isReady, isConnecting, contacts, messagesList, chatMessages, allChats, authDir }
 
@@ -528,6 +604,75 @@ async function connectUserToWhatsApp(userId) {
         const groupInfo = isGroup ? ` no grupo "${chatName}"` : '';
         const messageType = message.key.fromMe ? "ENVIADA" : "RECEBIDA";
         console.log(`📨 [${userId}] MENSAGEM ${messageType}${groupInfo}: ${messageText}`);
+
+        // SDR ANTIPLANTÃO - Responder apenas ao número específico
+        if (!message.key.fromMe && messageText && messageText.length > 0 && !isGroup) {
+            const cleanPhone = chatId.replace('@s.whatsapp.net', '').replace('+', '');
+            console.log(`🔍 [${userId}] Verificando número: ${cleanPhone} vs ${targetPhone}`);
+
+            if (cleanPhone === targetPhone) {
+                console.log(`🎯 [${userId}] MENSAGEM DO NÚMERO ALVO! Ativando SDR...`);
+
+                try {
+                    const contactName = message.pushName || 'Prospect';
+
+                    console.log(`👤 [${userId}] Processando mensagem para: ${contactName}`);
+                    console.log(`💬 [${userId}] Mensagem: "${messageText}"`);
+
+                    // Gerar resposta com Gemini SDR
+                    const sdrResponse = await processSDRMessage(messageText, contactName);
+
+                    console.log(`🤖 [${userId}] Resposta do SDR: "${sdrResponse}"`);
+
+                    // Enviar resposta
+                    await session.sock.sendMessage(chatId, { text: sdrResponse });
+                    console.log(`✅ [${userId}] Resposta SDR enviada!`);
+
+                    // Notificar admin sobre a interação
+                    const adminPhone = '5583996910414@s.whatsapp.net';
+                    const adminNotification = `🚀 SDR ANTIPLANTÃO ativo!\n\n👤 Prospect: ${contactName}\n📞 ${cleanPhone}\n💬 Perguntou: "${messageText}"\n🤖 Respondi: "${sdrResponse}"`;
+
+                    try {
+                        await session.sock.sendMessage(adminPhone, { text: adminNotification });
+                        console.log(`📤 [${userId}] Notificação enviada para admin`);
+                    } catch (notifyError) {
+                        console.error(`❌ [${userId}] Erro ao notificar admin:`, notifyError);
+                    }
+
+                    // Log da interação SDR
+                    addNotificationLog('success', `SDR respondeu para ${contactName}`, {
+                        participantPhone: cleanPhone,
+                        participantName: contactName,
+                        question: messageText,
+                        response: sdrResponse
+                    });
+
+                } catch (error) {
+                    console.error(`❌ [${userId}] Erro no SDR:`, error);
+
+                    // Resposta de fallback
+                    const fallbackMessage = `Olá! 👋 Sou do movimento ANTIPLANTÃO.
+
+Médico ganhando menos que biomédico? Isso precisa acabar!
+
+Gabriel Maia criou um método para médicos ganharem dinheiro SEM plantões, SEM PSF, SEM SUS.
+
+Quer saber como? Vamos agendar uma call rápida? 📞`;
+
+                    try {
+                        await session.sock.sendMessage(chatId, { text: fallbackMessage });
+                        console.log(`✅ [${userId}] Resposta de fallback enviada!`);
+                    } catch (fallbackError) {
+                        console.error(`❌ [${userId}] Erro ao enviar fallback:`, fallbackError);
+                    }
+
+                    addNotificationLog('error', 'Erro no SDR - enviada resposta de fallback', {
+                        participantPhone: cleanPhone,
+                        error: error.message
+                    });
+                }
+            }
+        }
 
         // Automação Bereanos (funciona para qualquer mensagem)
         console.log(`🔍 [${userId}] Verificando mensagem: "${messageText}"`);
