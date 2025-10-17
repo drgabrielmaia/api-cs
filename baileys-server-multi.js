@@ -1886,7 +1886,7 @@ async function checkAndSendNotifications(isDailySummary = false) {
                     // Agendar mensagem de follow-up em 10 minutos se não receber resposta
                     setTimeout(async () => {
                         // Verificar se ainda não recebeu resposta
-                        const followUpMessage = "É importante que você clique no botão acima.";
+                        const followUpMessage = "É importante que você confirme a nossa call.";
                         await sendWhatsAppMessage(normalizedPhone, followUpMessage);
                     }, 10 * 60 * 1000); // 10 minutos
 
@@ -1933,7 +1933,7 @@ async function checkAndSendNotifications(isDailySummary = false) {
                     // Agendar mensagem de follow-up em 10 minutos se não receber resposta
                     setTimeout(async () => {
                         // Verificar se ainda não recebeu resposta
-                        const followUpMessage = "É importante que você clique no botão acima.";
+                        const followUpMessage = "É importante que você confirme a nossa call.";
                         await sendWhatsAppMessage(normalizedPhone, followUpMessage);
                     }, 10 * 60 * 1000); // 10 minutos
 
@@ -2634,6 +2634,147 @@ app.post('/test-button', async (req, res) => {
     }
 });
 
+// Função para gerar PDF de leads
+async function generateLeadsPDF(weeklyOnly = false) {
+    try {
+        console.log(`📊 Gerando PDF de leads ${weeklyOnly ? 'semanal' : 'geral'}...`);
+
+        let query = supabase
+            .from('leads')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+        // Se for semanal, filtrar apenas da última semana
+        if (weeklyOnly) {
+            const oneWeekAgo = new Date();
+            oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+            query = query.gte('created_at', oneWeekAgo.toISOString());
+        }
+
+        const { data: leads, error } = await query;
+
+        if (error) {
+            console.error('Erro ao buscar leads:', error);
+            return null;
+        }
+
+        console.log(`📋 ${leads.length} leads encontrados`);
+
+        // Gerar conteúdo do relatório
+        const reportType = weeklyOnly ? 'Semanal' : 'Geral';
+        const reportDate = new Date().toLocaleDateString('pt-BR');
+
+        let pdfContent = `📊 RELATÓRIO DE LEADS - ${reportType.toUpperCase()}\n`;
+        pdfContent += `📅 Data: ${reportDate}\n`;
+        pdfContent += `📋 Total de leads: ${leads.length}\n\n`;
+
+        if (weeklyOnly) {
+            pdfContent += `📊 LEADS DA ÚLTIMA SEMANA\n`;
+            pdfContent += `(${new Date(Date.now() - 7*24*60*60*1000).toLocaleDateString('pt-BR')} - ${reportDate})\n\n`;
+        }
+
+        pdfContent += '═'.repeat(50) + '\n\n';
+
+        if (leads.length === 0) {
+            pdfContent += '📭 Nenhum lead encontrado no período.\n\n';
+        } else {
+            leads.forEach((lead, index) => {
+                pdfContent += `${index + 1}. *${lead.nome_completo}*\n`;
+                pdfContent += `   📍 Origem: ${lead.origem || 'Não informado'}\n`;
+                pdfContent += `   🎯 Status: ${lead.status}\n`;
+                if (lead.observacoes) {
+                    pdfContent += `   📝 Observações: ${lead.observacoes.substring(0, 100)}${lead.observacoes.length > 100 ? '...' : ''}\n`;
+                }
+                pdfContent += `   📅 Cadastrado: ${new Date(lead.created_at).toLocaleDateString('pt-BR')}\n\n`;
+            });
+        }
+
+        return {
+            content: pdfContent,
+            filename: `leads_${weeklyOnly ? 'semanal' : 'geral'}_${new Date().toISOString().split('T')[0]}.txt`,
+            leadsCount: leads.length,
+            reportType
+        };
+
+    } catch (error) {
+        console.error('Erro ao gerar PDF de leads:', error);
+        return null;
+    }
+}
+
+// Função para enviar PDF por WhatsApp
+async function sendLeadsPDFToWhatsApp(phoneNumber, weeklyOnly = false) {
+    try {
+        const session = getSession(defaultUserId);
+        if (!session || !session.isReady || !session.sock) {
+            console.log('❌ WhatsApp não está conectado');
+            return false;
+        }
+
+        const pdfData = await generateLeadsPDF(weeklyOnly);
+        if (!pdfData) {
+            console.log('❌ Erro ao gerar PDF de leads');
+            return false;
+        }
+
+        // Formatar número para WhatsApp
+        const jid = phoneNumber.includes('@') ? phoneNumber : `${phoneNumber}@s.whatsapp.net`;
+
+        // Enviar mensagem com relatório
+        await session.sock.sendMessage(jid, { text: pdfData.content });
+
+        console.log(`✅ Relatório de leads ${pdfData.reportType} enviado para ${phoneNumber}`);
+
+        addNotificationLog('success', `Relatório de leads ${pdfData.reportType} enviado via WhatsApp`, {
+            destinatario: phoneNumber,
+            leadsCount: pdfData.leadsCount,
+            tipo: pdfData.reportType
+        });
+
+        return true;
+
+    } catch (error) {
+        console.error('Erro ao enviar relatório por WhatsApp:', error);
+        addNotificationLog('error', 'Erro ao enviar relatório de leads via WhatsApp', { error: error.message });
+        return false;
+    }
+}
+
+// Endpoint para enviar PDF de leads manualmente
+app.post('/send-leads-pdf', async (req, res) => {
+    try {
+        const { phone, weekly = false } = req.body;
+
+        if (!phone) {
+            return res.json({ success: false, error: 'Número de telefone é obrigatório' });
+        }
+
+        const success = await sendLeadsPDFToWhatsApp(phone, weekly);
+
+        res.json({
+            success,
+            message: success ? 'Relatório enviado com sucesso' : 'Erro ao enviar relatório'
+        });
+    } catch (error) {
+        console.error('Erro no endpoint send-leads-pdf:', error);
+        res.json({ success: false, error: error.message });
+    }
+});
+
+// Configurar job semanal para envio de PDF
+function setupLeadsPDFJobs() {
+    // Job semanal: toda sexta às 12h
+    cron.schedule('0 12 * * 5', async () => {
+        console.log('⏰ Executando envio semanal de relatório de leads...');
+        await sendLeadsPDFToWhatsApp('5541998973032', true); // Semanal
+    }, {
+        scheduled: true,
+        timezone: "America/Sao_Paulo"
+    });
+
+    console.log('📊 Job de relatório de leads configurado: Sextas às 12h para +5541998973032');
+}
+
 app.listen(port, async () => {
     console.log(`🚀 WhatsApp Multi-User Baileys API rodando em https://api.medicosderesultado.com.br`);
     console.log(`👥 Sistema preparado para múltiplos usuários`);
@@ -2647,5 +2788,6 @@ app.listen(port, async () => {
             timestamp: new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
         });
         setupCronJobs();
+        setupLeadsPDFJobs();
     }, 10000);
 });
