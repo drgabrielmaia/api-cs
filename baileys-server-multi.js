@@ -64,6 +64,47 @@ const targetPhone = '5511986784297'; // Número que o SDR deve responder
 const genAI = new GoogleGenerativeAI('AIzaSyCtkT3y-NwYgNWIotoBcDxvAmIDXN10vEY');
 const model = genAI.getGenerativeModel({ model: "gemini-pro" });
 
+// Sistema de memória de conversas para SDR
+const conversationMemory = new Map(); // phoneNumber -> [{role: 'user'|'assistant', content: 'message'}]
+
+// Função para adicionar mensagem ao histórico
+function addToConversationMemory(phoneNumber, role, message) {
+    if (!conversationMemory.has(phoneNumber)) {
+        conversationMemory.set(phoneNumber, []);
+    }
+
+    const history = conversationMemory.get(phoneNumber);
+    history.push({ role, content: message, timestamp: new Date() });
+
+    // Manter apenas as últimas 20 mensagens para não sobrecarregar
+    if (history.length > 20) {
+        history.splice(0, history.length - 20);
+    }
+
+    console.log(`💾 Histórico atualizado para ${phoneNumber}:`, history.length, 'mensagens');
+}
+
+// Função para obter histórico da conversa
+function getConversationHistory(phoneNumber) {
+    return conversationMemory.get(phoneNumber) || [];
+}
+
+// Função para formatar histórico para o prompt
+function formatConversationHistory(phoneNumber) {
+    const history = getConversationHistory(phoneNumber);
+    if (history.length === 0) {
+        return "PRIMEIRA CONVERSA - Sem histórico anterior.";
+    }
+
+    let formatted = "HISTÓRICO DA CONVERSA:\n";
+    history.forEach((msg, index) => {
+        const role = msg.role === 'user' ? 'PROSPECT' : 'SDR';
+        formatted += `${index + 1}. ${role}: ${msg.content}\n`;
+    });
+
+    return formatted;
+}
+
 // Prompt para o SDR Antiplantão
 const SDR_PROMPT = `
 Você é um SDR humano especialista em quebrar objeções, trabalhando para Gabriel Maia no movimento ANTIPLANTÃO.
@@ -104,35 +145,49 @@ Responda como um SDR expert que quer genuinamente ajudar:
 `;
 
 // Função do SDR Antiplantão
-async function processSDRMessage(messageText, contactName) {
+async function processSDRMessage(messageText, contactName, phoneNumber) {
     try {
         console.log('🤖 Iniciando processamento SDR...');
         console.log('📝 Mensagem recebida:', messageText);
         console.log('👤 Nome do contato:', contactName);
+        console.log('📞 Número:', phoneNumber);
+
+        // Adicionar mensagem do usuário ao histórico
+        addToConversationMemory(phoneNumber, 'user', messageText);
+
+        // Obter contexto da conversa
+        const conversationContext = formatConversationHistory(phoneNumber);
+        console.log('📚 Contexto da conversa:', conversationContext);
 
         const prompt = SDR_PROMPT + `
 
-MENSAGEM RECEBIDA: "${messageText}"
+${conversationContext}
+
+MENSAGEM ATUAL: "${messageText}"
 NOME DO CONTATO: ${contactName || 'Não identificado'}
 
-INSTRUÇÕES ESPECÍFICAS:
-- Responda ESPECIFICAMENTE à mensagem recebida
-- Se for um cumprimento (oi, olá), seja amigável e pergunte sobre medicina
-- Se mencionar especialidade, explore mais sobre a situação profissional
-- Se falar de dinheiro/renda, conecte com os resultados do Gabriel
-- Se mostrar objeção, quebre ela com empatia
-- SEMPRE conduza para agendar uma call
-- Seja natural e humano, não robótico
+INSTRUÇÕES CONTEXTUAIS:
+- Considere TODA a conversa anterior ao responder
+- Se já se apresentou, não se apresente novamente
+- Se já sabe a especialidade, não pergunte de novo
+- Continue naturalmente a partir do que já foi dito
+- Responda ESPECIFICAMENTE à mensagem atual considerando o contexto
+- SEMPRE conduza para agendar uma call baseado no que já sabe
+- Seja natural e humano, mantendo a continuidade da conversa
 
-Agora responda como um SDR expert:`;
+Responda como um SDR que lembra de toda a conversa:`;
 
         console.log('🚀 Enviando para Gemini...');
         const result = await model.generateContent(prompt);
         const response = await result.response;
-        const text = response.text();
+        const text = response.text().trim();
 
         console.log('✅ Resposta do Gemini:', text);
-        return text.trim();
+
+        // Adicionar resposta do SDR ao histórico
+        addToConversationMemory(phoneNumber, 'assistant', text);
+
+        return text;
     } catch (error) {
         console.error('❌ Erro no SDR Gemini:', error);
         addNotificationLog('error', 'Erro ao gerar resposta do SDR', { error: error.message });
@@ -642,7 +697,7 @@ async function connectUserToWhatsApp(userId) {
                     console.log(`💬 [${userId}] Mensagem: "${messageText}"`);
 
                     // Gerar resposta com Gemini SDR
-                    const sdrResponse = await processSDRMessage(messageText, contactName);
+                    const sdrResponse = await processSDRMessage(messageText, contactName, cleanPhone);
 
                     console.log(`🤖 [${userId}] Resposta do SDR: "${sdrResponse}"`);
 
