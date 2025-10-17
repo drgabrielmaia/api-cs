@@ -2766,13 +2766,24 @@ function setupLeadsPDFJobs() {
     // Job semanal: toda sexta às 12h
     cron.schedule('0 12 * * 5', async () => {
         console.log('⏰ Executando envio semanal de relatório de leads...');
-        await sendLeadsPDFToWhatsApp('5541998973032', true); // Semanal
+
+        // Enviar para os dois números
+        const destinatarios = ['5541998973032', '5583996910414'];
+
+        for (const numero of destinatarios) {
+            try {
+                await sendLeadsPDFToWhatsApp(numero, true); // Semanal
+                console.log(`✅ Relatório semanal enviado para ${numero}`);
+            } catch (error) {
+                console.error(`❌ Erro ao enviar para ${numero}:`, error);
+            }
+        }
     }, {
         scheduled: true,
         timezone: "America/Sao_Paulo"
     });
 
-    console.log('📊 Job de relatório de leads configurado: Sextas às 12h para +5541998973032');
+    console.log('📊 Job de relatório de leads configurado: Sextas às 12h para +5541998973032 e +5583996910414');
 }
 
 app.listen(port, async () => {
