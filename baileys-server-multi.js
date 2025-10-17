@@ -106,22 +106,53 @@ Responda como um SDR expert que quer genuinamente ajudar:
 // Função do SDR Antiplantão
 async function processSDRMessage(messageText, contactName) {
     try {
-        const prompt = SDR_PROMPT + `\n\nMENSAGEM RECEBIDA: "${messageText}"\nNOME DO CONTATO: ${contactName || 'Não identificado'}\n\nResposta do SDR:`;
+        console.log('🤖 Iniciando processamento SDR...');
+        console.log('📝 Mensagem recebida:', messageText);
+        console.log('👤 Nome do contato:', contactName);
 
+        const prompt = SDR_PROMPT + `
+
+MENSAGEM RECEBIDA: "${messageText}"
+NOME DO CONTATO: ${contactName || 'Não identificado'}
+
+INSTRUÇÕES ESPECÍFICAS:
+- Responda ESPECIFICAMENTE à mensagem recebida
+- Se for um cumprimento (oi, olá), seja amigável e pergunte sobre medicina
+- Se mencionar especialidade, explore mais sobre a situação profissional
+- Se falar de dinheiro/renda, conecte com os resultados do Gabriel
+- Se mostrar objeção, quebre ela com empatia
+- SEMPRE conduza para agendar uma call
+- Seja natural e humano, não robótico
+
+Agora responda como um SDR expert:`;
+
+        console.log('🚀 Enviando para Gemini...');
         const result = await model.generateContent(prompt);
         const response = await result.response;
         const text = response.text();
 
+        console.log('✅ Resposta do Gemini:', text);
         return text.trim();
     } catch (error) {
+        console.error('❌ Erro no SDR Gemini:', error);
         addNotificationLog('error', 'Erro ao gerar resposta do SDR', { error: error.message });
-        return `Oi! Tudo bem?
 
-Eu sou da equipe do Gabriel Maia, vi que você pode estar interessado no movimento antiplantão.
+        // Fallback mais inteligente baseado na mensagem
+        if (messageText.toLowerCase().includes('oi') || messageText.toLowerCase().includes('olá')) {
+            return `Oi! Tudo bem?
 
-Você é médico? Se for, posso te contar algo que pode interessar...
+Vi que você entrou em contato. Você é médico?
+
+Pergunto porque trabalho com o Gabriel Maia ajudando médicos que querem sair da correria dos plantões.
 
 Qual sua especialidade?`;
+        }
+
+        return `Oi!
+
+Obrigado por entrar em contato. Sou da equipe do Gabriel Maia.
+
+Você é médico? Qual sua especialidade?`;
     }
 }
 
