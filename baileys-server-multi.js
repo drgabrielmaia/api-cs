@@ -62,7 +62,7 @@ const defaultUserId = 'default'; // Usuário padrão para notificações
 // Configuração do SDR ANTIPLANTÃO
 const targetPhone = '5511986784297'; // Número que o SDR deve responder
 const genAI = new GoogleGenerativeAI('AIzaSyCtkT3y-NwYgNWIotoBcDxvAmIDXN10vEY');
-const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
 // Sistema de memória de conversas para SDR
 const conversationMemory = new Map(); // phoneNumber -> [{role: 'user'|'assistant', content: 'message'}]
