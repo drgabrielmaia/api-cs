@@ -685,7 +685,13 @@ async function connectUserToWhatsApp(userId) {
         // SDR ANTIPLANTÃO - Responder apenas ao número específico
         if (!message.key.fromMe && messageText && messageText.length > 0 && !isGroup) {
             const cleanPhone = chatId.replace('@s.whatsapp.net', '').replace('+', '');
-            console.log(`🔍 [${userId}] Verificando número: ${cleanPhone} vs ${targetPhone}`);
+            console.log(`🔍 [${userId}] DEBUG SDR:`);
+            console.log(`   - chatId original: ${chatId}`);
+            console.log(`   - cleanPhone: "${cleanPhone}"`);
+            console.log(`   - targetPhone: "${targetPhone}"`);
+            console.log(`   - São iguais? ${cleanPhone === targetPhone}`);
+            console.log(`   - Tipo cleanPhone: ${typeof cleanPhone}`);
+            console.log(`   - Tipo targetPhone: ${typeof targetPhone}`);
 
             if (cleanPhone === targetPhone) {
                 console.log(`🎯 [${userId}] MENSAGEM DO NÚMERO ALVO! Ativando SDR...`);
