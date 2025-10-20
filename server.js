@@ -612,7 +612,7 @@ async function getEventsForToday() {
                     telefone
                 ),
                 leads (
-                    nome,
+                    nome_completo,
                     telefone
                 )
             `)
@@ -689,10 +689,10 @@ async function checkAndSendNotifications(isDailySummary = false) {
                     const timeStr = eventSaoPaulo.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'});
 
                     summaryMessage += `• ${timeStr} - ${event.title}`;
-                    if (event.mentorado_id && event.mentorados) {
+                    if (event.mentorado_id && event.mentorados && event.mentorados.nome_completo) {
                         summaryMessage += ` (com ${event.mentorados.nome_completo})`;
-                    } else if (event.lead_id && event.leads) {
-                        summaryMessage += ` (com ${event.leads.nome} - lead)`;
+                    } else if (event.lead_id && event.leads && event.leads.nome_completo) {
+                        summaryMessage += ` (com ${event.leads.nome_completo} - lead)`;
                     }
                     summaryMessage += '\n';
                 }
@@ -767,9 +767,9 @@ async function checkAndSendNotifications(isDailySummary = false) {
                 console.log(`🔍 Debug lead - event.lead_id: ${event.lead_id}, event.leads: ${JSON.stringify(event.leads)}`);
 
                 if (event.lead_id && event.leads && event.leads.telefone) {
-                    console.log(`📱 Enviando mensagem para lead: ${event.leads.nome} (${event.leads.telefone})`);
+                    console.log(`📱 Enviando mensagem para lead: ${event.leads.nome_completo} (${event.leads.telefone})`);
 
-                    const message = `Olá ${event.leads.nome}, faltam 30 minutos para nossa call!\nPor aqui já está tudo pronto.\nEm breve iremos te enviar o link pelo WhatsApp. Nos vemos em breve. 🫡`;
+                    const message = `Olá ${event.leads.nome_completo}, faltam 30 minutos para nossa call!\nPor aqui já está tudo pronto.\nEm breve iremos te enviar o link pelo WhatsApp. Nos vemos em breve. 🫡`;
 
                     const messageWithButton = {
                         text: message,
@@ -792,9 +792,9 @@ async function checkAndSendNotifications(isDailySummary = false) {
 
                     if (sent) {
                         notificationsSent++;
-                        console.log(`✅ Lembrete enviado para lead: ${event.leads.nome}`);
+                        console.log(`✅ Lembrete enviado para lead: ${event.leads.nome_completo}`);
                     } else {
-                        console.log(`❌ Falha ao enviar lembrete para lead: ${event.leads.nome}`);
+                        console.log(`❌ Falha ao enviar lembrete para lead: ${event.leads.nome_completo}`);
                     }
                 } else {
                     console.log(`⏭️ Pulando lead - Motivo: lead_id=${!!event.lead_id}, leads=${!!event.leads}, telefone=${event.leads?.telefone}`);
@@ -805,7 +805,7 @@ async function checkAndSendNotifications(isDailySummary = false) {
                 if (event.mentorado_id && event.mentorados) {
                     adminMessage = `📅 Lembrete: Call com ${event.mentorados.nome_completo} (mentorado) em 30 minutos!\n\nEvento: ${event.title}`;
                 } else if (event.lead_id && event.leads) {
-                    adminMessage = `📅 Lembrete: Call com ${event.leads.nome} (lead) em 30 minutos!\n\nEvento: ${event.title}`;
+                    adminMessage = `📅 Lembrete: Call com ${event.leads.nome_completo} (lead) em 30 minutos!\n\nEvento: ${event.title}`;
                 } else {
                     adminMessage = `📅 Lembrete: ${event.title} em 30 minutos!`;
                 }
@@ -837,12 +837,10 @@ function setupCronJobs() {
     });
 
     // Job para resumo diário às 7h da manhã (horário de São Paulo)
-    // Executar às 7h no horário de São Paulo
-    cron.schedule('0 7 * * *', () => {
+    // Executar às 10h UTC (7h SP sem horário de verão) ou 9h UTC (7h SP com horário de verão)
+    cron.schedule('0 10 * * *', () => {
         console.log('🌅 Enviando resumo diário dos compromissos...');
         checkAndSendNotifications(true);
-    }, {
-        timezone: "America/Sao_Paulo"
     });
 
     console.log('⏰ Cron jobs configurados:');
@@ -877,7 +875,7 @@ app.get('/debug/events', async (req, res) => {
             },
             lead: {
                 id: event.lead_id,
-                nome: event.leads?.nome,
+                nome: event.leads?.nome_completo,
                 telefone: event.leads?.telefone
             }
         }));
