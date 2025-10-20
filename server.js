@@ -4,7 +4,7 @@ const cors = require('cors');
 const QRCode = require('qrcode');
 const cron = require('node-cron');
 const { createClient } = require('@supabase/supabase-js');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+// const { GoogleGenerativeAI } = require('@google/generative-ai'); // COMENTADO - GEMINI AI
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
@@ -31,12 +31,12 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 const adminPhone = '558396910414'; // Gabriel Maia
 const targetPhone = '5511986784297'; // Número que o SDR deve responder
 
-// Configuração do Gemini
-const genAI = new GoogleGenerativeAI('AIzaSyCtkT3y-NwYgNWIotoBcDxvAmIDXN10vEY');
-const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+// Configuração do Gemini - COMENTADO
+// const genAI = new GoogleGenerativeAI('AIzaSyCtkT3y-NwYgNWIotoBcDxvAmIDXN10vEY');
+// const model = genAI.getGenerativeModel({ model: "gemini-pro" });
 
-// Prompt para o SDR Antiplantão
-const SDR_PROMPT = `
+// Prompt para o SDR Antiplantão - COMENTADO
+/* const SDR_PROMPT = `
 Você é um SDR (Sales Development Representative) especializado do movimento ANTIPLANTÃO, criado por Gabriel Maia.
 
 CONTEXTO DO NEGÓCIO:
@@ -81,7 +81,7 @@ AGENDAMENTO DE CALLS:
 RESPONDA SEMPRE buscando agendar uma call. Seja conversacional, natural e focado no resultado.
 
 Agora responda a mensagem a seguir como um SDR expert:
-`;
+`; */
 
 // Função para verificar se número existe no WhatsApp (com e sem 9)
 async function verifyWhatsAppNumber(baseNumber) {
@@ -161,8 +161,8 @@ async function sendMessageWithNumberCheck(phoneNumber, message) {
     }
 }
 
-// Função do SDR Antiplantão
-async function processSDRMessage(messageText, contactName) {
+// Função do SDR Antiplantão - COMENTADO (GEMINI AI)
+/* async function processSDRMessage(messageText, contactName) {
     try {
         const prompt = SDR_PROMPT + `\n\nMENSAGEM RECEBIDA: "${messageText}"\nNOME DO CONTATO: ${contactName || 'Não identificado'}\n\nResposta do SDR:`;
 
@@ -181,6 +181,18 @@ Gabriel Maia criou um método para médicos ganharem dinheiro SEM plantões, SEM
 
 Quer saber como? Vamos agendar uma call rápida? 📞`;
     }
+} */
+
+// Função do SDR Antiplantão - VERSÃO SEM IA
+async function processSDRMessage(messageText, contactName) {
+    // Retorna mensagem fixa sem usar IA
+    return `Olá! 👋 Sou do movimento ANTIPLANTÃO.
+
+Médico ganhando menos que biomédico? Isso precisa acabar!
+
+Gabriel Maia criou um método para médicos ganharem dinheiro SEM plantões, SEM PSF, SEM SUS.
+
+Quer saber como? Vamos agendar uma call rápida? 📞`;
 }
 
 // Função para marcar evento como mensagem enviada
