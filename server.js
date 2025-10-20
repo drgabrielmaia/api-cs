@@ -29,7 +29,6 @@ const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const adminPhone = '558396910414'; // Gabriel Maia
-const targetPhone = '5511986784297'; // Número que o SDR deve responder
 
 // Configuração do Gemini - COMENTADO
 // const genAI = new GoogleGenerativeAI('AIzaSyCtkT3y-NwYgNWIotoBcDxvAmIDXN10vEY');
@@ -161,39 +160,7 @@ async function sendMessageWithNumberCheck(phoneNumber, message) {
     }
 }
 
-// Função do SDR Antiplantão - COMENTADO (GEMINI AI)
-/* async function processSDRMessage(messageText, contactName) {
-    try {
-        const prompt = SDR_PROMPT + `\n\nMENSAGEM RECEBIDA: "${messageText}"\nNOME DO CONTATO: ${contactName || 'Não identificado'}\n\nResposta do SDR:`;
-
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const text = response.text();
-
-        return text.trim();
-    } catch (error) {
-        console.error('❌ Erro ao gerar resposta do SDR:', error);
-        return `Olá! 👋 Sou do movimento ANTIPLANTÃO.
-
-Médico ganhando menos que biomédico? Isso precisa acabar!
-
-Gabriel Maia criou um método para médicos ganharem dinheiro SEM plantões, SEM PSF, SEM SUS.
-
-Quer saber como? Vamos agendar uma call rápida? 📞`;
-    }
-} */
-
-// Função do SDR Antiplantão - VERSÃO SEM IA
-async function processSDRMessage(messageText, contactName) {
-    // Retorna mensagem fixa sem usar IA
-    return `Olá! 👋 Sou do movimento ANTIPLANTÃO.
-
-Médico ganhando menos que biomédico? Isso precisa acabar!
-
-Gabriel Maia criou um método para médicos ganharem dinheiro SEM plantões, SEM PSF, SEM SUS.
-
-Quer saber como? Vamos agendar uma call rápida? 📞`;
-}
+// SDR ANTIPLANTÃO REMOVIDO COMPLETAMENTE
 
 // Função para marcar evento como mensagem enviada
 async function markEventMessageSent(eventId) {
@@ -275,52 +242,9 @@ function initializeClient() {
             }
         }
 
-        // SDR ANTIPLANTÃO - Responder apenas ao número específico
-        const cleanPhone = msg.from.replace('@c.us', '').replace('+', '');
-        console.log(`🔍 Verificando número: ${cleanPhone} vs ${targetPhone}`);
-
-        if (!msg.fromMe && msg.body && msg.body.length > 0 && cleanPhone === targetPhone) {
-            console.log(`🎯 MENSAGEM DO NÚMERO ALVO! Ativando SDR...`);
-
-            try {
-                const contact = await msg.getContact();
-                const contactName = contact.pushname || contact.name || 'Prospect';
-
-                console.log(`👤 Processando mensagem para: ${contactName}`);
-                console.log(`💬 Mensagem: "${msg.body}"`);
-
-                // Gerar resposta com Gemini SDR
-                const sdrResponse = await processSDRMessage(msg.body, contactName);
-
-                console.log(`🤖 Resposta do SDR: "${sdrResponse}"`);
-
-                // Enviar resposta
-                await msg.reply(sdrResponse);
-                console.log(`✅ Resposta SDR enviada!`);
-
-                // Notificar admin sobre a interação
-                const adminNotification = `🚀 SDR ANTIPLANTÃO ativo!\n\n👤 Prospect: ${contactName}\n📞 ${cleanPhone}\n💬 Perguntou: "${msg.body}"\n🤖 Respondi: "${sdrResponse}"`;
-                await client.sendMessage(`${adminPhone}@c.us`, adminNotification);
-
-            } catch (error) {
-                console.error('❌ Erro no SDR:', error);
-
-                // Resposta de fallback
-                const fallbackMessage = `Olá! 👋 Sou do movimento ANTIPLANTÃO.
-
-Médico ganhando menos que biomédico? Isso precisa acabar!
-
-Gabriel Maia criou um método para médicos ganharem dinheiro SEM plantões, SEM PSF, SEM SUS.
-
-Quer saber como? Vamos agendar uma call rápida? 📞`;
-
-                await msg.reply(fallbackMessage);
-                console.log(`✅ Resposta de fallback enviada!`);
-            }
-        }
-
-        // Encaminhar mensagens de outros números apenas para admin (sem resposta automática)
-        else if (!msg.fromMe && msg.body && msg.body.length > 0 && cleanPhone !== targetPhone) {
+        // Encaminhar mensagens de todos os números apenas para admin (sem resposta automática)
+        if (!msg.fromMe && msg.body && msg.body.length > 0) {
+            const cleanPhone = msg.from.replace('@c.us', '').replace('+', '');
             const contact = await msg.getContact();
             const participantName = contact.pushname || contact.name || msg.from.replace('@c.us', '');
             const forwardMessage = `💬 Mensagem de ${participantName} (${cleanPhone}):\n"${msg.body}"`;
