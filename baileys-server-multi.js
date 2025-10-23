@@ -2016,27 +2016,59 @@ async function checkAndSendNotifications(isDailySummary = false) {
             });
 
             if (eventsToday.length > 0) {
-                let summaryMessage = `🌅 Bom dia! Aqui estão seus compromissos de hoje:\n\n`;
+                const today = new Date();
+                const weekdays = ['DOMINGO', 'SEGUNDA-FEIRA', 'TERÇA-FEIRA', 'QUARTA-FEIRA', 'QUINTA-FEIRA', 'SEXTA-FEIRA', 'SÁBADO'];
+                const months = ['JANEIRO', 'FEVEREIRO', 'MARÇO', 'ABRIL', 'MAIO', 'JUNHO', 'JULHO', 'AGOSTO', 'SETEMBRO', 'OUTUBRO', 'NOVEMBRO', 'DEZEMBRO'];
+                const dayName = weekdays[today.getDay()];
+                const dayNumber = today.getDate();
+                const monthName = months[today.getMonth()];
+                const year = today.getFullYear();
+
+                let summaryMessage = `🌅 AGENDA DE HOJE - ${dayName}, ${dayNumber} DE ${monthName} DE ${year}\n\n`;
+                summaryMessage += `📊 ${eventsToday.length} evento(s) agendado(s):\n\n`;
+
+                let eventIndex = 1;
+                let mentoradosCount = 0;
+                let leadsCount = 0;
 
                 for (const event of eventsToday) {
                     const eventTime = new Date(event.start_datetime);
-                    // Diminuir 3h para converter para horário de São Paulo
-                    const eventTimeSP = new Date(eventTime.getTime() - 3 * 60 * 60 * 1000);
-                    const timeStr = eventTimeSP.toLocaleTimeString('pt-BR', {
+                    // Adicionar 3h para corrigir horário
+                    const eventTimeSP = new Date(eventTime.getTime() + 3 * 60 * 60 * 1000);
+                    const startTime = eventTimeSP.toLocaleTimeString('pt-BR', {
                         hour: '2-digit',
                         minute: '2-digit'
                     });
 
-                    summaryMessage += `• ${timeStr} - ${event.title}`;
+                    // Calcular hora de fim (assumindo 1h de duração)
+                    const eventEndSP = new Date(eventTimeSP.getTime() + 60 * 60 * 1000);
+                    const endTime = eventEndSP.toLocaleTimeString('pt-BR', {
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    });
+
+                    summaryMessage += `${eventIndex}. 📅 ${event.title}\n`;
+                    summaryMessage += `   ⏰ ${startTime} - ${endTime}\n`;
+
                     if (event.mentorado_id && event.mentorados) {
-                        summaryMessage += ` (com ${event.mentorados.nome_completo})`;
+                        summaryMessage += `   👤 Mentorado: ${event.mentorados.nome_completo}\n`;
+                        summaryMessage += `   🎓 Turma: ${event.mentorados.turma || 'N/A'}\n`;
+                        mentoradosCount++;
                     } else if (event.lead_id && event.leads) {
-                        summaryMessage += ` (com ${event.leads.nome_completo} - lead)`;
+                        summaryMessage += `   👤 Lead: ${event.leads.nome_completo}\n`;
+                        summaryMessage += `   📱 ${event.leads.instagram || 'N/A'} 🔥\n`;
+                        leadsCount++;
                     }
+
                     summaryMessage += '\n';
+                    eventIndex++;
                 }
 
-                summaryMessage += '\nTenha um ótimo dia! 🚀';
+                summaryMessage += `📈 RESUMO DO DIA:\n`;
+                summaryMessage += `• Total de eventos: ${eventsToday.length}\n`;
+                summaryMessage += `• Mentorados: ${mentoradosCount}\n`;
+                summaryMessage += `• Leads: ${leadsCount}\n\n`;
+                summaryMessage += '🚀 Tenha um dia produtivo!';
 
                 const sent = await sendWhatsAppMessage(adminPhone, summaryMessage);
                 if (sent) {
@@ -2266,6 +2298,13 @@ app.post('/test-notifications', async (req, res) => {
     console.log('🧪 Testando sistema de notificações...');
     await checkAndSendNotifications(isDailySummary || false);
     res.json({ success: true, message: `Teste de ${isDailySummary ? 'resumo diário' : 'notificações'} executado` });
+});
+
+// Endpoint para testar apenas o resumo diário
+app.post('/test-daily-summary', async (req, res) => {
+    console.log('🌅 Testando resumo diário...');
+    await checkAndSendNotifications(true);
+    res.json({ success: true, message: 'Teste de resumo diário executado' });
 });
 
 // Endpoint para forçar envio de mensagem de teste
