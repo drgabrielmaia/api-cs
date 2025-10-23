@@ -2056,7 +2056,8 @@ async function checkAndSendNotifications(isDailySummary = false) {
                         mentoradosCount++;
                     } else if (event.lead_id && event.leads) {
                         summaryMessage += `   👤 Lead: ${event.leads.nome_completo}\n`;
-                        summaryMessage += `   📱 ${event.leads.instagram || 'N/A'} 🔥\n`;
+                        const instagram = event.leads.instagram ? `${event.leads.instagram} 🔥` : '🔥';
+                        summaryMessage += `   📱 ${instagram}\n`;
                         leadsCount++;
                     }
 
