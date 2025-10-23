@@ -59,8 +59,8 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 const adminPhone = '558396910414'; // Gabriel Maia
 const defaultUserId = 'default'; // Usuário padrão para notificações
 
-// Configuração do SDR ANTIPLANTÃO
-const targetPhone = '5511986784297'; // Número que o SDR deve responder
+// Configuração do SDR ANTIPLANTÃO - DESATIVADO
+// const targetPhone = '5511986784297'; // Número que o SDR deve responder
 const genAI = new GoogleGenerativeAI('AIzaSyCtkT3y-NwYgNWIotoBcDxvAmIDXN10vEY');
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
@@ -682,8 +682,8 @@ async function connectUserToWhatsApp(userId) {
         const messageType = message.key.fromMe ? "ENVIADA" : "RECEBIDA";
         console.log(`📨 [${userId}] MENSAGEM ${messageType}${groupInfo}: ${messageText}`);
 
-        // SDR ANTIPLANTÃO - Responder apenas ao número específico
-        if (!message.key.fromMe && messageText && messageText.length > 0 && !isGroup) {
+        // SDR ANTIPLANTÃO - DESATIVADO
+        if (false && !message.key.fromMe && messageText && messageText.length > 0 && !isGroup) {
             const cleanPhone = chatId.replace('@s.whatsapp.net', '').replace('+', '');
             console.log(`🔍 [${userId}] DEBUG SDR:`);
             console.log(`   - chatId original: ${chatId}`);
