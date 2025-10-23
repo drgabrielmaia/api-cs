@@ -2031,7 +2031,7 @@ async function checkAndSendNotifications(isDailySummary = false) {
                     if (event.mentorado_id && event.mentorados) {
                         summaryMessage += ` (com ${event.mentorados.nome_completo})`;
                     } else if (event.lead_id && event.leads) {
-                        summaryMessage += ` (com ${event.leads.nome} - lead)`;
+                        summaryMessage += ` (com ${event.leads.nome_completo} - lead)`;
                     }
                     summaryMessage += '\n';
                 }
