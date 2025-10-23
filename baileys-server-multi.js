@@ -2033,8 +2033,8 @@ async function checkAndSendNotifications(isDailySummary = false) {
 
                 for (const event of eventsToday) {
                     const eventTime = new Date(event.start_datetime);
-                    // Adicionar 3h para corrigir horário
-                    const eventTimeSP = new Date(eventTime.getTime() + 3 * 60 * 60 * 1000);
+                    // Usar horário original do banco
+                    const eventTimeSP = new Date(eventTime.getTime());
                     const startTime = eventTimeSP.toLocaleTimeString('pt-BR', {
                         hour: '2-digit',
                         minute: '2-digit'
