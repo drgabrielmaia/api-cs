@@ -773,8 +773,8 @@ function setupCronJobs() {
     });
 
     // Job para resumo diário às 7h da manhã (horário de São Paulo)
-    // Executar às 10h UTC (7h SP sem horário de verão) ou 9h UTC (7h SP com horário de verão)
-    cron.schedule('0 10 * * *', () => {
+    // Executar às 13h UTC (7h SP + 3 horas de ajuste)
+    cron.schedule('0 13 * * *', () => {
         console.log('🌅 Enviando resumo diário dos compromissos...');
         checkAndSendNotifications(true);
     });

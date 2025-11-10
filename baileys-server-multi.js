@@ -2001,7 +2001,7 @@ async function checkAndSendNotifications(isDailySummary = false) {
 
             // Buscar eventos do dia considerando timezone SP
             const saoPauloTime = new Date();
-            saoPauloTime.setHours(saoPauloTime.getHours() - 3); // Converter para SP
+            saoPauloTime.setHours(saoPauloTime.getHours()); // Converter para SP
 
             const todayStart = new Date(saoPauloTime.getFullYear(), saoPauloTime.getMonth(), saoPauloTime.getDate());
             const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
@@ -2040,8 +2040,9 @@ async function checkAndSendNotifications(isDailySummary = false) {
                         minute: '2-digit'
                     });
 
-                    // Calcular hora de fim (assumindo 1h de duração)
-                    const eventEndSP = new Date(eventTimeSP.getTime() + 60 * 60 * 1000);
+                    // Usar horário real de fim do evento
+                    const eventEndTime = new Date(event.end_datetime);
+                    const eventEndSP = new Date(eventEndTime.getTime());
                     const endTime = eventEndSP.toLocaleTimeString('pt-BR', {
                         hour: '2-digit',
                         minute: '2-digit'
