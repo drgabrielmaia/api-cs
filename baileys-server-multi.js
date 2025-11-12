@@ -2066,11 +2066,123 @@ async function checkAndSendNotifications(isDailySummary = false) {
                     eventIndex++;
                 }
 
+                // Buscar follow-ups para hoje
+                const { data: followUpsToday, error: followUpError } = await supabase
+                    .from('lead_followups')
+                    .select(`
+                        *,
+                        leads:lead_id (
+                            nome_completo,
+                            empresa,
+                            telefone,
+                            nivel_interesse,
+                            temperatura,
+                            urgencia_compra,
+                            orcamento_disponivel,
+                            responsavel_vendas,
+                            observacao
+                        )
+                    `)
+                    .eq('status', 'pendente')
+                    .gte('data_agendada', todayStartUTC.toISOString())
+                    .lt('data_agendada', todayEndUTC.toISOString())
+                    .order('data_agendada', { ascending: true });
+
+                if (followUpError) {
+                    console.log('❌ Erro ao buscar follow-ups:', followUpError);
+                }
+
+                const followUps = followUpsToday || [];
+
+                // Adicionar follow-ups à mensagem se houver
+                if (followUps.length > 0) {
+                    summaryMessage += `\n⏰ FOLLOW-UPS PARA HOJE (${followUps.length}):\n\n`;
+
+                    followUps.forEach((followUp, index) => {
+                        const followUpTime = new Date(followUp.data_agendada);
+                        const timeStr = followUpTime.toLocaleTimeString('pt-BR', {
+                            hour: '2-digit',
+                            minute: '2-digit'
+                        });
+
+                        const prioridadeEmoji = {
+                            'urgente': '🚨',
+                            'alta': '🔥',
+                            'media': '⚡',
+                            'baixa': '📝'
+                        };
+
+                        const tipoEmoji = {
+                            'call': '📞',
+                            'email': '📧',
+                            'whatsapp': '💬',
+                            'meeting': '🤝',
+                            'proposal': '📄'
+                        };
+
+                        summaryMessage += `${index + 1}. ${prioridadeEmoji[followUp.prioridade] || '📝'} ${followUp.titulo}\n`;
+                        summaryMessage += `   ⏰ ${timeStr} - ${tipoEmoji[followUp.tipo] || '📝'} ${followUp.tipo}\n`;
+
+                        if (followUp.leads) {
+                            const lead = followUp.leads;
+                            summaryMessage += `   👤 Lead: ${lead.nome_completo}`;
+                            if (lead.empresa) {
+                                summaryMessage += ` (${lead.empresa})`;
+                            }
+                            summaryMessage += `\n`;
+
+                            if (lead.telefone) {
+                                summaryMessage += `   📱 ${lead.telefone}\n`;
+                            }
+
+                            // Informações de qualificação
+                            if (lead.nivel_interesse || lead.temperatura || lead.urgencia_compra) {
+                                let qualificacao = '   🎯 ';
+                                if (lead.nivel_interesse) {
+                                    qualificacao += `Interesse: ${lead.nivel_interesse}/10 `;
+                                }
+                                if (lead.temperatura) {
+                                    const tempEmoji = lead.temperatura === 'quente' ? '🔥' : lead.temperatura === 'morno' ? '🟠' : '🔵';
+                                    qualificacao += `${tempEmoji} ${lead.temperatura} `;
+                                }
+                                if (lead.urgencia_compra) {
+                                    qualificacao += `⚡ ${lead.urgencia_compra}`;
+                                }
+                                summaryMessage += `${qualificacao}\n`;
+                            }
+
+                            // Informações financeiras
+                            if (lead.orcamento_disponivel) {
+                                summaryMessage += `   💰 Orçamento: R$ ${lead.orcamento_disponivel.toLocaleString('pt-BR')}\n`;
+                            }
+
+                            // Responsável
+                            if (lead.responsavel_vendas) {
+                                summaryMessage += `   👨‍💼 Responsável: ${lead.responsavel_vendas}\n`;
+                            }
+
+                            // Observações específicas
+                            if (lead.observacao) {
+                                summaryMessage += `   📝 ${lead.observacao}\n`;
+                            }
+                        }
+
+                        if (followUp.descricao) {
+                            summaryMessage += `   💬 ${followUp.descricao}\n`;
+                        }
+
+                        summaryMessage += '\n';
+                    });
+                }
+
                 summaryMessage += `📈 RESUMO DO DIA:\n`;
                 summaryMessage += `• Total de eventos: ${eventsToday.length}\n`;
                 summaryMessage += `• Mentorados: ${mentoradosCount}\n`;
-                summaryMessage += `• Leads: ${leadsCount}\n\n`;
-                summaryMessage += '🚀 Tenha um dia produtivo!';
+                summaryMessage += `• Leads: ${leadsCount}\n`;
+                if (followUps.length > 0) {
+                    summaryMessage += `• Follow-ups: ${followUps.length}\n`;
+                }
+                summaryMessage += '\n🚀 Tenha um dia produtivo!';
 
                 const sent = await sendWhatsAppMessage(adminPhone, summaryMessage);
                 if (sent) {
@@ -2328,6 +2440,54 @@ app.post('/test-whatsapp', async (req, res) => {
         });
     } catch (error) {
         res.json({ success: false, error: error.message });
+    }
+});
+
+// Endpoint para envio de notificações de follow-up
+app.post('/send-notification', async (req, res) => {
+    try {
+        const { message, type } = req.body;
+
+        if (!message) {
+            return res.json({
+                success: false,
+                error: 'Mensagem não fornecida'
+            });
+        }
+
+        console.log(`📬 Enviando notificação de ${type || 'follow-up'}...`);
+
+        const sent = await sendWhatsAppMessage(adminPhone, message);
+
+        if (sent) {
+            console.log('✅ Notificação de follow-up enviada com sucesso!');
+            addNotificationLog('success', `Notificação ${type || 'follow-up'} enviada`, {
+                message: message.substring(0, 100) + '...'
+            });
+        } else {
+            console.log('❌ Falha ao enviar notificação de follow-up');
+            addNotificationLog('error', `Falha ao enviar notificação ${type || 'follow-up'}`, {
+                adminPhone,
+                messageLength: message.length
+            });
+        }
+
+        res.json({
+            success: sent,
+            message: sent ? 'Notificação enviada com sucesso!' : 'Falha ao enviar notificação',
+            type: type || 'follow-up',
+            whatsappReady: userSessions.get(defaultUserId)?.isReady || false
+        });
+
+    } catch (error) {
+        console.error('❌ Erro ao enviar notificação:', error);
+        addNotificationLog('error', 'Erro ao enviar notificação', {
+            error: error.message
+        });
+        res.json({
+            success: false,
+            error: error.message
+        });
     }
 });
 
