@@ -898,6 +898,8 @@ app.post('/auto-messages/bulk', async (req, res) => {
             message: msg.message,
             scheduled_time: msg.scheduledTime,
             target_group: msg.targetGroup,
+            photo_url: msg.photo_url || null,
+            photo_caption: msg.photo_caption || null,
             is_active: true,
             user_id: 'default'
         }));
