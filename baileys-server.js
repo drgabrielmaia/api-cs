@@ -5,6 +5,8 @@ const QRCode = require('qrcode');
 const { Boom } = require('@hapi/boom');
 const fs = require('fs');
 const path = require('path');
+const cron = require('node-cron');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -20,6 +22,12 @@ let contacts = [];
 let messagesList = [];
 let chatMessages = new Map(); // Map para armazenar mensagens por chat
 let allChats = []; // Lista de todos os chats/conversas
+
+// Configuração do Supabase
+const supabase = createClient(
+    'https://udzmlnnztzzwrphhizol.supabase.co',
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVkem1sbm56dHp6d3JwaGhpem9sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc0MjkwNzYsImV4cCI6MjA3MzAwNTA3Nn0.KjihWHrNYxDO5ZZKpa8UYPAhw9HIU11yvAvvsNaiPZU'
+);
 
 // Caminhos para persistência local
 const DATA_DIR = path.join(__dirname, 'auth_info_baileys');
@@ -799,6 +807,310 @@ app.get('/', (req, res) => {
         `);
     }
 });
+
+// ===== ROTAS PARA MENSAGENS AUTOMÁTICAS =====
+
+// Listar mensagens automáticas
+app.get('/auto-messages', async (req, res) => {
+    try {
+        const { data: autoMessages, error } = await supabase
+            .from('auto_messages')
+            .select('*')
+            .order('scheduled_time');
+
+        if (error) {
+            console.error('❌ Erro ao buscar mensagens automáticas:', error);
+            return res.json({ success: false, error: 'Erro ao buscar mensagens automáticas' });
+        }
+
+        res.json({ success: true, data: autoMessages });
+    } catch (error) {
+        console.error('❌ Erro interno ao buscar mensagens automáticas:', error);
+        res.json({ success: false, error: 'Erro interno do servidor' });
+    }
+});
+
+// Criar nova mensagem automática
+app.post('/auto-messages', async (req, res) => {
+    try {
+        const { message, scheduledTime, targetGroup } = req.body;
+
+        if (!message || !scheduledTime || !targetGroup) {
+            return res.json({
+                success: false,
+                error: 'Dados obrigatórios: message, scheduledTime, targetGroup'
+            });
+        }
+
+        const { data, error } = await supabase
+            .from('auto_messages')
+            .insert([{
+                message: message,
+                scheduled_time: scheduledTime,
+                target_group: targetGroup,
+                is_active: true,
+                user_id: 'default'
+            }])
+            .select()
+            .single();
+
+        if (error) {
+            console.error('❌ Erro ao criar mensagem automática:', error);
+            return res.json({ success: false, error: 'Erro ao criar mensagem automática' });
+        }
+
+        console.log('✅ Nova mensagem automática criada:', data.id);
+        res.json({ success: true, data: data });
+    } catch (error) {
+        console.error('❌ Erro interno ao criar mensagem automática:', error);
+        res.json({ success: false, error: 'Erro interno do servidor' });
+    }
+});
+
+// Salvar múltiplas mensagens automáticas
+app.post('/auto-messages/bulk', async (req, res) => {
+    try {
+        const { autoMessages } = req.body;
+
+        if (!autoMessages || !Array.isArray(autoMessages)) {
+            return res.json({
+                success: false,
+                error: 'Dados obrigatórios: autoMessages (array)'
+            });
+        }
+
+        // Primeiro, limpar mensagens existentes (opcional - pode ser modificado)
+        await supabase.from('auto_messages').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+
+        // Filtrar apenas mensagens válidas
+        const validMessages = autoMessages.filter(msg =>
+            msg.message && msg.scheduledTime && msg.targetGroup
+        ).map(msg => ({
+            message: msg.message,
+            scheduled_time: msg.scheduledTime,
+            target_group: msg.targetGroup,
+            is_active: true,
+            user_id: 'default'
+        }));
+
+        if (validMessages.length === 0) {
+            return res.json({
+                success: false,
+                error: 'Nenhuma mensagem válida encontrada'
+            });
+        }
+
+        const { data, error } = await supabase
+            .from('auto_messages')
+            .insert(validMessages)
+            .select();
+
+        if (error) {
+            console.error('❌ Erro ao salvar mensagens automáticas:', error);
+            return res.json({ success: false, error: 'Erro ao salvar mensagens automáticas' });
+        }
+
+        console.log(`✅ ${data.length} mensagens automáticas salvas`);
+        res.json({
+            success: true,
+            data: data,
+            message: `${data.length} mensagens automáticas configuradas com sucesso!`
+        });
+    } catch (error) {
+        console.error('❌ Erro interno ao salvar mensagens automáticas:', error);
+        res.json({ success: false, error: 'Erro interno do servidor' });
+    }
+});
+
+// Atualizar mensagem automática
+app.put('/auto-messages/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { message, scheduledTime, targetGroup, isActive } = req.body;
+
+        const updates = {};
+        if (message !== undefined) updates.message = message;
+        if (scheduledTime !== undefined) updates.scheduled_time = scheduledTime;
+        if (targetGroup !== undefined) updates.target_group = targetGroup;
+        if (isActive !== undefined) updates.is_active = isActive;
+
+        const { data, error } = await supabase
+            .from('auto_messages')
+            .update(updates)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('❌ Erro ao atualizar mensagem automática:', error);
+            return res.json({ success: false, error: 'Erro ao atualizar mensagem automática' });
+        }
+
+        console.log('✅ Mensagem automática atualizada:', id);
+        res.json({ success: true, data: data });
+    } catch (error) {
+        console.error('❌ Erro interno ao atualizar mensagem automática:', error);
+        res.json({ success: false, error: 'Erro interno do servidor' });
+    }
+});
+
+// Deletar mensagem automática
+app.delete('/auto-messages/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const { error } = await supabase
+            .from('auto_messages')
+            .delete()
+            .eq('id', id);
+
+        if (error) {
+            console.error('❌ Erro ao deletar mensagem automática:', error);
+            return res.json({ success: false, error: 'Erro ao deletar mensagem automática' });
+        }
+
+        console.log('✅ Mensagem automática deletada:', id);
+        res.json({ success: true, message: 'Mensagem automática deletada com sucesso' });
+    } catch (error) {
+        console.error('❌ Erro interno ao deletar mensagem automática:', error);
+        res.json({ success: false, error: 'Erro interno do servidor' });
+    }
+});
+
+// Logs de mensagens automáticas
+app.get('/auto-messages/logs', async (req, res) => {
+    try {
+        const { data: logs, error } = await supabase
+            .from('auto_message_logs')
+            .select(`
+                *,
+                auto_messages (
+                    message,
+                    scheduled_time,
+                    target_group
+                )
+            `)
+            .order('sent_at', { ascending: false })
+            .limit(100);
+
+        if (error) {
+            console.error('❌ Erro ao buscar logs de mensagens automáticas:', error);
+            return res.json({ success: false, error: 'Erro ao buscar logs' });
+        }
+
+        res.json({ success: true, data: logs });
+    } catch (error) {
+        console.error('❌ Erro interno ao buscar logs:', error);
+        res.json({ success: false, error: 'Erro interno do servidor' });
+    }
+});
+
+// Função para verificar e enviar mensagens automáticas
+async function checkAndSendAutoMessages() {
+    try {
+        console.log('🔄 Verificando mensagens automáticas para envio...');
+
+        if (!isReady || !sock) {
+            console.log('⏸️ WhatsApp não conectado - pulando verificação de mensagens automáticas');
+            return;
+        }
+
+        const now = new Date();
+        const currentTime = now.toTimeString().slice(0, 5); // HH:MM
+        const currentDate = now.toISOString().slice(0, 10); // YYYY-MM-DD
+
+        // Buscar mensagens que devem ser enviadas agora
+        const { data: autoMessages, error } = await supabase
+            .from('auto_messages')
+            .select('*')
+            .eq('is_active', true)
+            .eq('scheduled_time', currentTime);
+
+        if (error) {
+            console.error('❌ Erro ao buscar mensagens automáticas:', error);
+            return;
+        }
+
+        if (!autoMessages || autoMessages.length === 0) {
+            console.log('ℹ️ Nenhuma mensagem automática para enviar neste horário');
+            return;
+        }
+
+        console.log(`📬 Encontradas ${autoMessages.length} mensagens para enviar`);
+
+        for (const autoMessage of autoMessages) {
+            try {
+                // Verificar se já foi enviada hoje
+                const { data: sentToday, error: logError } = await supabase
+                    .from('auto_message_logs')
+                    .select('id')
+                    .eq('auto_message_id', autoMessage.id)
+                    .gte('sent_at', `${currentDate}T00:00:00`);
+
+                if (logError) {
+                    console.error('❌ Erro ao verificar logs:', logError);
+                    continue;
+                }
+
+                if (sentToday && sentToday.length > 0) {
+                    console.log(`⏭️ Mensagem ${autoMessage.id} já foi enviada hoje`);
+                    continue;
+                }
+
+                // Enviar mensagem
+                // Determinar JID correto (grupo ou número individual)
+                let targetJid = autoMessage.target_group;
+
+                // Se não tem @, adicionar sufixo apropriado
+                if (!targetJid.includes('@')) {
+                    // Se tem mais de 10 dígitos, provavelmente é número individual
+                    if (targetJid.length > 10) {
+                        targetJid = `${targetJid}@s.whatsapp.net`;
+                    } else {
+                        targetJid = `${targetJid}@g.us`;
+                    }
+                }
+
+                await sock.sendMessage(targetJid, {
+                    text: autoMessage.message
+                });
+
+                // Registrar log de envio
+                await supabase
+                    .from('auto_message_logs')
+                    .insert({
+                        auto_message_id: autoMessage.id,
+                        sent_at: new Date().toISOString(),
+                        status: 'sent',
+                        target_group: autoMessage.target_group
+                    });
+
+                const isGroup = targetJid.includes('@g.us');
+                console.log(`✅ Mensagem automática enviada para ${isGroup ? 'grupo' : 'número'} ${targetJid}`);
+
+            } catch (sendError) {
+                console.error(`❌ Erro ao enviar mensagem automática ${autoMessage.id}:`, sendError);
+
+                // Registrar log de erro
+                await supabase
+                    .from('auto_message_logs')
+                    .insert({
+                        auto_message_id: autoMessage.id,
+                        sent_at: new Date().toISOString(),
+                        status: 'failed',
+                        target_group: autoMessage.target_group,
+                        error_message: sendError.message
+                    });
+            }
+        }
+
+    } catch (error) {
+        console.error('❌ Erro na verificação de mensagens automáticas:', error);
+    }
+}
+
+// Configurar cron job para verificar mensagens automáticas a cada minuto
+cron.schedule('* * * * *', checkAndSendAutoMessages);
 
 app.listen(port, async () => {
     console.log(`🚀 WhatsApp Baileys API rodando em http://localhost:${port}`);

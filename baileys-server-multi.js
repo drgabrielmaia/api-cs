@@ -3292,7 +3292,7 @@ app.get('/auto-messages', async (req, res) => {
     try {
         const { data: autoMessages, error } = await supabase
             .from('auto_messages')
-            .select('*')
+            .select('*, user_id')
             .order('scheduled_time');
 
         if (error) {
@@ -3528,17 +3528,36 @@ async function checkAndSendAutoMessages() {
                 }
 
                 // Enviar mensagem
-                const userId = autoMessage.user_id || 'default';
+                const userId = (autoMessage.user_id && autoMessage.user_id !== null) ? autoMessage.user_id : 'default';
                 const session = userSessions.get(userId);
+
+                console.log(`🔍 DEBUG - userId: ${userId}`);
+                console.log(`🔍 DEBUG - session exists: ${!!session}`);
+                console.log(`🔍 DEBUG - session.sock exists: ${!!(session && session.sock)}`);
 
                 if (!session || !session.sock) {
                     console.log(`⚠️ Sessão não encontrada para usuário ${userId}`);
                     continue;
                 }
 
-                const groupJid = `${autoMessage.target_group}@g.us`;
+                // Determinar JID correto (grupo ou número individual)
+                let targetJid = autoMessage.target_group;
+                console.log(`🔍 DEBUG - target_group original: "${targetJid}"`);
 
-                await session.sock.sendMessage(groupJid, {
+                // Se não tem @, adicionar sufixo apropriado
+                if (!targetJid.includes('@')) {
+                    // Se tem mais de 10 dígitos, provavelmente é número individual
+                    if (targetJid.length > 10) {
+                        targetJid = `${targetJid}@s.whatsapp.net`;
+                    } else {
+                        targetJid = `${targetJid}@g.us`;
+                    }
+                }
+
+                console.log(`🔍 DEBUG - targetJid final: "${targetJid}"`);
+                console.log(`🔍 DEBUG - message: "${autoMessage.message}"`);
+
+                await session.sock.sendMessage(targetJid, {
                     text: autoMessage.message
                 });
 
@@ -3552,7 +3571,8 @@ async function checkAndSendAutoMessages() {
                         target_group: autoMessage.target_group
                     });
 
-                console.log(`✅ Mensagem automática enviada para grupo ${autoMessage.target_group}`);
+                const isGroup = targetJid.includes('@g.us');
+                console.log(`✅ Mensagem automática enviada para ${isGroup ? 'grupo' : 'número'} ${targetJid}`);
 
             } catch (sendError) {
                 console.error(`❌ Erro ao enviar mensagem automática ${autoMessage.id}:`, sendError);
