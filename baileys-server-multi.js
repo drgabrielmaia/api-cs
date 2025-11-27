@@ -3310,12 +3310,19 @@ app.get('/auto-messages', async (req, res) => {
 // Criar nova mensagem automática
 app.post('/auto-messages', async (req, res) => {
     try {
-        const { message, scheduledTime, targetGroup } = req.body;
+        const { message, scheduledTime, targetGroup, photoUrl, photoCaption } = req.body;
 
-        if (!message || !scheduledTime || !targetGroup) {
+        if (!scheduledTime || !targetGroup) {
             return res.json({
                 success: false,
-                error: 'Dados obrigatórios: message, scheduledTime, targetGroup'
+                error: 'Dados obrigatórios: scheduledTime, targetGroup'
+            });
+        }
+
+        if (!message && !photoUrl) {
+            return res.json({
+                success: false,
+                error: 'É necessário ter pelo menos uma mensagem de texto ou foto'
             });
         }
 
@@ -3325,7 +3332,9 @@ app.post('/auto-messages', async (req, res) => {
                 message: message,
                 scheduled_time: scheduledTime,
                 target_group: targetGroup,
-                is_active: true
+                is_active: true,
+                photo_url: photoUrl || null,
+                photo_caption: photoCaption || null
             }])
             .select()
             .single();
@@ -3556,10 +3565,25 @@ async function checkAndSendAutoMessages() {
 
                 console.log(`🔍 DEBUG - targetJid final: "${targetJid}"`);
                 console.log(`🔍 DEBUG - message: "${autoMessage.message}"`);
+                console.log(`🔍 DEBUG - photo_url: "${autoMessage.photo_url}"`);
 
-                await session.sock.sendMessage(targetJid, {
-                    text: autoMessage.message
-                });
+                // Determinar tipo de mensagem
+                let messageContent = {};
+
+                if (autoMessage.photo_url) {
+                    // Mensagem com foto
+                    messageContent = {
+                        image: { url: autoMessage.photo_url },
+                        caption: autoMessage.photo_caption || autoMessage.message || ''
+                    };
+                } else {
+                    // Mensagem só texto
+                    messageContent = {
+                        text: autoMessage.message
+                    };
+                }
+
+                await session.sock.sendMessage(targetJid, messageContent);
 
                 // Registrar log de envio
                 await supabase
