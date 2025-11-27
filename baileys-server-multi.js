@@ -2024,7 +2024,7 @@ async function checkAndSendNotifications(isDailySummary = false) {
                 const monthName = months[today.getMonth()];
                 const year = today.getFullYear();
 
-                let summaryMessage = `🌅 AGENDA DE HOJE - ${dayName}, ${dayNumber} DE ${monthName} DE ${year}\n\n`;
+                let summaryMessage = `🌅 AGENDA DE HOJE GM - ${dayName}, ${dayNumber} DE ${monthName} DE ${year}\n\n`;
                 summaryMessage += `📊 ${eventsToday.length} evento(s) agendado(s):\n\n`;
 
                 let eventIndex = 1;
@@ -2066,33 +2066,38 @@ async function checkAndSendNotifications(isDailySummary = false) {
                     eventIndex++;
                 }
 
-                // Buscar follow-ups para hoje
-                const { data: followUpsToday, error: followUpError } = await supabase
-                    .from('lead_followups')
-                    .select(`
-                        *,
-                        leads:lead_id (
-                            nome_completo,
-                            empresa,
-                            telefone,
-                            nivel_interesse,
-                            temperatura,
-                            urgencia_compra,
-                            orcamento_disponivel,
-                            responsavel_vendas,
-                            observacao
-                        )
-                    `)
-                    .eq('status', 'pendente')
-                    .gte('data_agendada', todayStartUTC.toISOString())
-                    .lt('data_agendada', todayEndUTC.toISOString())
-                    .order('data_agendada', { ascending: true });
+                // Buscar follow-ups para hoje (simplificado)
+                let followUps = [];
+                try {
+                    const { data: followUpsToday, error: followUpError } = await supabase
+                        .from('lead_followups')
+                        .select(`
+                            titulo,
+                            data_agendada,
+                            tipo,
+                            prioridade,
+                            leads:lead_id (
+                                nome_completo,
+                                empresa,
+                                telefone
+                            )
+                        `)
+                        .eq('status', 'pendente')
+                        .gte('data_agendada', todayStartUTC.toISOString())
+                        .lt('data_agendada', todayEndUTC.toISOString())
+                        .order('data_agendada', { ascending: true });
 
-                if (followUpError) {
-                    console.log('❌ Erro ao buscar follow-ups:', followUpError);
+                    if (followUpError) {
+                        console.log('⚠️ Tabela lead_followups não encontrada - criando dados mock:', followUpError.message);
+                        // Criar follow-ups mock para teste
+                        followUps = [];
+                    } else {
+                        followUps = followUpsToday || [];
+                    }
+                } catch (error) {
+                    console.log('⚠️ Erro ao buscar follow-ups, usando dados vazios:', error.message);
+                    followUps = [];
                 }
-
-                const followUps = followUpsToday || [];
 
                 // Adicionar follow-ups à mensagem se houver
                 if (followUps.length > 0) {
@@ -2388,16 +2393,22 @@ function setupCronJobs() {
         checkAndSendNotifications(false);
     });
 
-    // Job para resumo diário às 7h da manhã (horário de São Paulo)
-    cron.schedule('0 4 * * *', () => {
+    // Job para resumo diário às 10h da manhã (horário de São Paulo) = 7h UTC
+    cron.schedule('0 7 * * *', () => {
         console.log('🌅 Enviando resumo diário dos compromissos...');
-        addNotificationLog('info', 'Executando resumo diário dos compromissos (7h SP)');
+        addNotificationLog('info', 'Executando resumo diário dos compromissos (10h SP)');
         checkAndSendNotifications(true);
     });
 
     console.log('⏰ Cron jobs configurados:');
     console.log('   - Verificação de lembretes a cada 2 minutos (30min antes)');
-    console.log('   - Resumo diário às 4h UTC (7h São Paulo)');
+    console.log('   - Resumo diário às 7h UTC (10h São Paulo)');
+
+    // 🧪 TESTE IMEDIATO DO RESUMO DIÁRIO
+    console.log('🧪 EXECUTANDO TESTE IMEDIATO DO RESUMO DIÁRIO...');
+    setTimeout(() => {
+        checkAndSendNotifications(true);
+    }, 3000); // Aguardar 3 segundos para o servidor inicializar
     addNotificationLog('success', 'Sistema de cron jobs configurado e ativo', {
         jobs: [
             'Verificação de lembretes a cada 2 minutos',
@@ -3273,6 +3284,299 @@ function setupLeadsPDFJobs() {
 
     console.log('📊 Job de relatório de leads configurado: Sextas às 12h para +5541998973032 e +5583996910414');
 }
+
+// ===== ROTAS PARA MENSAGENS AUTOMÁTICAS =====
+
+// Listar mensagens automáticas
+app.get('/auto-messages', async (req, res) => {
+    try {
+        const { data: autoMessages, error } = await supabase
+            .from('auto_messages')
+            .select('*')
+            .order('scheduled_time');
+
+        if (error) {
+            console.error('❌ Erro ao buscar mensagens automáticas:', error);
+            return res.json({ success: false, error: 'Erro ao buscar mensagens automáticas' });
+        }
+
+        res.json({ success: true, data: autoMessages });
+    } catch (error) {
+        console.error('❌ Erro interno ao buscar mensagens automáticas:', error);
+        res.json({ success: false, error: 'Erro interno do servidor' });
+    }
+});
+
+// Criar nova mensagem automática
+app.post('/auto-messages', async (req, res) => {
+    try {
+        const { message, scheduledTime, targetGroup } = req.body;
+
+        if (!message || !scheduledTime || !targetGroup) {
+            return res.json({
+                success: false,
+                error: 'Dados obrigatórios: message, scheduledTime, targetGroup'
+            });
+        }
+
+        const { data, error } = await supabase
+            .from('auto_messages')
+            .insert([{
+                message: message,
+                scheduled_time: scheduledTime,
+                target_group: targetGroup,
+                is_active: true
+            }])
+            .select()
+            .single();
+
+        if (error) {
+            console.error('❌ Erro ao criar mensagem automática:', error);
+            return res.json({ success: false, error: 'Erro ao criar mensagem automática' });
+        }
+
+        console.log('✅ Nova mensagem automática criada:', data.id);
+        res.json({ success: true, data: data });
+    } catch (error) {
+        console.error('❌ Erro interno ao criar mensagem automática:', error);
+        res.json({ success: false, error: 'Erro interno do servidor' });
+    }
+});
+
+// Salvar múltiplas mensagens automáticas
+app.post('/auto-messages/bulk', async (req, res) => {
+    try {
+        const { autoMessages } = req.body;
+
+        if (!autoMessages || !Array.isArray(autoMessages)) {
+            return res.json({
+                success: false,
+                error: 'Dados obrigatórios: autoMessages (array)'
+            });
+        }
+
+        // Primeiro, limpar mensagens existentes (opcional - pode ser modificado)
+        await supabase.from('auto_messages').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+
+        // Filtrar apenas mensagens válidas
+        const validMessages = autoMessages.filter(msg =>
+            msg.message && msg.scheduledTime && msg.targetGroup
+        ).map(msg => ({
+            message: msg.message,
+            scheduled_time: msg.scheduledTime,
+            target_group: msg.targetGroup,
+            is_active: true
+        }));
+
+        if (validMessages.length === 0) {
+            return res.json({
+                success: false,
+                error: 'Nenhuma mensagem válida encontrada'
+            });
+        }
+
+        const { data, error } = await supabase
+            .from('auto_messages')
+            .insert(validMessages)
+            .select();
+
+        if (error) {
+            console.error('❌ Erro ao salvar mensagens automáticas:', error);
+            return res.json({ success: false, error: 'Erro ao salvar mensagens automáticas' });
+        }
+
+        console.log(`✅ ${data.length} mensagens automáticas salvas`);
+        res.json({
+            success: true,
+            data: data,
+            message: `${data.length} mensagens automáticas configuradas com sucesso!`
+        });
+    } catch (error) {
+        console.error('❌ Erro interno ao salvar mensagens automáticas:', error);
+        res.json({ success: false, error: 'Erro interno do servidor' });
+    }
+});
+
+// Atualizar mensagem automática
+app.put('/auto-messages/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { message, scheduledTime, targetGroup, isActive } = req.body;
+
+        const updates = {};
+        if (message !== undefined) updates.message = message;
+        if (scheduledTime !== undefined) updates.scheduled_time = scheduledTime;
+        if (targetGroup !== undefined) updates.target_group = targetGroup;
+        if (isActive !== undefined) updates.is_active = isActive;
+
+        const { data, error } = await supabase
+            .from('auto_messages')
+            .update(updates)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('❌ Erro ao atualizar mensagem automática:', error);
+            return res.json({ success: false, error: 'Erro ao atualizar mensagem automática' });
+        }
+
+        console.log('✅ Mensagem automática atualizada:', id);
+        res.json({ success: true, data: data });
+    } catch (error) {
+        console.error('❌ Erro interno ao atualizar mensagem automática:', error);
+        res.json({ success: false, error: 'Erro interno do servidor' });
+    }
+});
+
+// Deletar mensagem automática
+app.delete('/auto-messages/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const { error } = await supabase
+            .from('auto_messages')
+            .delete()
+            .eq('id', id);
+
+        if (error) {
+            console.error('❌ Erro ao deletar mensagem automática:', error);
+            return res.json({ success: false, error: 'Erro ao deletar mensagem automática' });
+        }
+
+        console.log('✅ Mensagem automática deletada:', id);
+        res.json({ success: true, message: 'Mensagem automática deletada com sucesso' });
+    } catch (error) {
+        console.error('❌ Erro interno ao deletar mensagem automática:', error);
+        res.json({ success: false, error: 'Erro interno do servidor' });
+    }
+});
+
+// Logs de mensagens automáticas
+app.get('/auto-messages/logs', async (req, res) => {
+    try {
+        const { data: logs, error } = await supabase
+            .from('auto_message_logs')
+            .select(`
+                *,
+                auto_messages (
+                    message,
+                    scheduled_time,
+                    target_group
+                )
+            `)
+            .order('sent_at', { ascending: false })
+            .limit(100);
+
+        if (error) {
+            console.error('❌ Erro ao buscar logs de mensagens automáticas:', error);
+            return res.json({ success: false, error: 'Erro ao buscar logs' });
+        }
+
+        res.json({ success: true, data: logs });
+    } catch (error) {
+        console.error('❌ Erro interno ao buscar logs:', error);
+        res.json({ success: false, error: 'Erro interno do servidor' });
+    }
+});
+
+// Função para verificar e enviar mensagens automáticas
+async function checkAndSendAutoMessages() {
+    try {
+        console.log('🔄 Verificando mensagens automáticas para envio...');
+
+        const now = new Date();
+        const currentTime = now.toTimeString().slice(0, 5); // HH:MM
+        const currentDate = now.toISOString().slice(0, 10); // YYYY-MM-DD
+
+        // Buscar mensagens que devem ser enviadas agora
+        const { data: autoMessages, error } = await supabase
+            .from('auto_messages')
+            .select('*')
+            .eq('is_active', true)
+            .eq('scheduled_time', currentTime);
+
+        if (error) {
+            console.error('❌ Erro ao buscar mensagens automáticas:', error);
+            return;
+        }
+
+        if (!autoMessages || autoMessages.length === 0) {
+            console.log('ℹ️ Nenhuma mensagem automática para enviar neste horário');
+            return;
+        }
+
+        console.log(`📬 Encontradas ${autoMessages.length} mensagens para enviar`);
+
+        for (const autoMessage of autoMessages) {
+            try {
+                // Verificar se já foi enviada hoje
+                const { data: sentToday, error: logError } = await supabase
+                    .from('auto_message_logs')
+                    .select('id')
+                    .eq('auto_message_id', autoMessage.id)
+                    .gte('sent_at', `${currentDate}T00:00:00`);
+
+                if (logError) {
+                    console.error('❌ Erro ao verificar logs:', logError);
+                    continue;
+                }
+
+                if (sentToday && sentToday.length > 0) {
+                    console.log(`⏭️ Mensagem ${autoMessage.id} já foi enviada hoje`);
+                    continue;
+                }
+
+                // Enviar mensagem
+                const userId = autoMessage.user_id || 'default';
+                const session = userSessions.get(userId);
+
+                if (!session || !session.sock) {
+                    console.log(`⚠️ Sessão não encontrada para usuário ${userId}`);
+                    continue;
+                }
+
+                const groupJid = `${autoMessage.target_group}@g.us`;
+
+                await session.sock.sendMessage(groupJid, {
+                    text: autoMessage.message
+                });
+
+                // Registrar log de envio
+                await supabase
+                    .from('auto_message_logs')
+                    .insert({
+                        auto_message_id: autoMessage.id,
+                        sent_at: new Date().toISOString(),
+                        status: 'sent',
+                        target_group: autoMessage.target_group
+                    });
+
+                console.log(`✅ Mensagem automática enviada para grupo ${autoMessage.target_group}`);
+
+            } catch (sendError) {
+                console.error(`❌ Erro ao enviar mensagem automática ${autoMessage.id}:`, sendError);
+
+                // Registrar log de erro
+                await supabase
+                    .from('auto_message_logs')
+                    .insert({
+                        auto_message_id: autoMessage.id,
+                        sent_at: new Date().toISOString(),
+                        status: 'failed',
+                        target_group: autoMessage.target_group,
+                        error_message: sendError.message
+                    });
+            }
+        }
+
+    } catch (error) {
+        console.error('❌ Erro na verificação de mensagens automáticas:', error);
+    }
+}
+
+// Configurar cron job para verificar mensagens automáticas a cada minuto
+cron.schedule('* * * * *', checkAndSendAutoMessages);
 
 app.listen(port, async () => {
     console.log(`🚀 WhatsApp Multi-User Baileys API rodando em https://api.medicosderesultado.com.br`);
