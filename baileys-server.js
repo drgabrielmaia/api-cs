@@ -11,7 +11,12 @@ const { createClient } = require('@supabase/supabase-js');
 const app = express();
 const port = process.env.PORT || 3001;
 
-// app.use(cors()); // Comentado - nginx gerencia CORS
+app.use(cors({
+    origin: ['http://localhost:3000', 'https://api.medicosderesultado.com.br'],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning']
+})); // CORS habilitado para localhost:3000
 app.use(express.json());
 
 let sock;
