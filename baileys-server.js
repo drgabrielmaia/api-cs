@@ -1040,7 +1040,8 @@ async function checkAndSendAutoMessages() {
             .from('auto_messages')
             .select('*')
             .eq('is_active', true)
-            .eq('scheduled_time', currentTime);
+            .eq('scheduled_time', currentTime)
+            .or(`scheduled_date.is.null,scheduled_date.eq.${currentDate}`);
 
         if (error) {
             console.error('❌ Erro ao buscar mensagens automáticas:', error);
