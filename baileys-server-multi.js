@@ -3362,6 +3362,9 @@ app.post('/auto-messages/bulk', async (req, res) => {
     try {
         const { autoMessages } = req.body;
 
+        console.log('🔍 DEBUG - Dados recebidos no backend:', JSON.stringify(req.body, null, 2));
+        console.log('🔍 DEBUG - autoMessages:', JSON.stringify(autoMessages, null, 2));
+
         if (!autoMessages || !Array.isArray(autoMessages)) {
             return res.json({
                 success: false,
@@ -3384,6 +3387,8 @@ app.post('/auto-messages/bulk', async (req, res) => {
             photo_caption: msg.photo_caption || null,
             is_active: true
         }));
+
+        console.log('🔍 DEBUG - validMessages que serão inseridas:', JSON.stringify(validMessages, null, 2));
 
         if (validMessages.length === 0) {
             return res.json({
