@@ -898,11 +898,12 @@ app.post('/auto-messages/bulk', async (req, res) => {
 
         // Filtrar apenas mensagens válidas
         const validMessages = autoMessages.filter(msg =>
-            msg.message && msg.scheduledTime && msg.targetGroup
+            msg.message && msg.scheduled_time && msg.target_group
         ).map(msg => ({
             message: msg.message,
-            scheduled_time: msg.scheduledTime,
-            target_group: msg.targetGroup,
+            scheduled_time: msg.scheduled_time,
+            scheduled_date: msg.scheduled_date || null,
+            target_group: msg.target_group,
             photo_url: msg.photo_url || null,
             photo_caption: msg.photo_caption || null,
             is_active: true,
