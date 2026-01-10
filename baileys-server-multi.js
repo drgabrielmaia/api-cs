@@ -8,6 +8,7 @@ const path = require('path');
 const cron = require('node-cron');
 const { createClient } = require('@supabase/supabase-js');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { settingsManager } = require('./organization-settings');
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -61,7 +62,10 @@ const supabaseUrl = 'https://udzmlnnztzzwrphhizol.supabase.co';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVkem1sbm56dHp6d3JwaGhpem9sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc0MjkwNzYsImV4cCI6MjA3MzAwNTA3Nn0.KjihWHrNYxDO5ZZKpa8UYPAhw9HIU11yvAvvsNaiPZU';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-const adminPhone = '558396910414'; // Gabriel Maia
+// Função para obter número do admin baseado na organização
+const getAdminPhone = async (organizationId = 'default') => {
+  return await settingsManager.getAdminPhone(organizationId);
+};
 const defaultUserId = 'default'; // Usuário padrão para notificações
 
 // Configuração do SDR ANTIPLANTÃO - DESATIVADO
@@ -572,7 +576,7 @@ async function connectUserToWhatsApp(userId) {
                 });
 
                 // Encaminhar para admin
-                const adminPhone = '5583996910414@s.whatsapp.net';
+                const adminPhone = await getAdminPhone(userId);
                 const confirmMessage = `✅ ${participantName} confirmou presença na call (Evento ID: ${eventId})\n📋 Protocolo: ${protocol}`;
 
                 try {
@@ -592,7 +596,7 @@ async function connectUserToWhatsApp(userId) {
                 });
 
                 // Encaminhar para admin
-                const adminPhone = '5583996910414@s.whatsapp.net';
+                const adminPhone = await getAdminPhone(userId);
                 const confirmMessage = `🎯 ${participantName} clicou em "${buttonId}"\n📋 Protocolo: ${protocol}`;
 
                 try {
@@ -633,7 +637,7 @@ async function connectUserToWhatsApp(userId) {
                 if (confirmationData.count < confirmationData.maxMessages) {
                     confirmationData.count++;
 
-                    const adminPhone = '5583996910414@s.whatsapp.net';
+                    const adminPhone = await getAdminPhone(userId);
                     let adminMessage;
 
                     // Verificar se a resposta é "OK" (confirmação)
@@ -717,7 +721,7 @@ async function connectUserToWhatsApp(userId) {
                     console.log(`✅ [${userId}] Resposta SDR enviada!`);
 
                     // Notificar admin sobre a interação
-                    const adminPhone = '5583996910414@s.whatsapp.net';
+                    const adminPhone = await getAdminPhone(userId);
                     const adminNotification = `🚀 SDR ANTIPLANTÃO ativo!\n\n👤 Prospect: ${contactName}\n📞 ${cleanPhone}\n💬 Perguntou: "${messageText}"\n🤖 Respondi: "${sdrResponse}"`;
 
                     try {
@@ -1777,7 +1781,7 @@ async function checkAndSendNotifications() {
                     message += `\n\nDescrição: ${event.description}`;
                 }
 
-                const sent = await sendBaileysMessage(adminPhone, message);
+                const sent = await sendBaileysMessage(await getAdminPhone(), message);
                 if (sent) {
                     notificationsSent++;
                     // Marcar como enviado
@@ -2194,7 +2198,7 @@ async function checkAndSendNotifications(isDailySummary = false) {
                 }
                 summaryMessage += '\n🚀 Tenha um dia produtivo!';
 
-                const sent = await sendWhatsAppMessage(adminPhone, summaryMessage);
+                const sent = await sendWhatsAppMessage(await getAdminPhone(), summaryMessage);
                 if (sent) {
                     console.log('✅ Resumo diário enviado com sucesso!');
                     notificationsSent++;
@@ -2355,7 +2359,7 @@ async function checkAndSendNotifications(isDailySummary = false) {
                     adminMessage += `\n\nDescrição: ${event.description}`;
                 }
 
-                const sentAdmin = await sendWhatsAppMessage(adminPhone, adminMessage);
+                const sentAdmin = await sendWhatsAppMessage(await getAdminPhone(), adminMessage);
                 if (sentAdmin) {
                     notificationsSent++;
                     console.log(`✅ Lembrete enviado para admin sobre: ${event.title}`);
@@ -2441,7 +2445,7 @@ app.post('/test-daily-summary', async (req, res) => {
 app.post('/test-whatsapp', async (req, res) => {
     try {
         const { phone, message } = req.body;
-        const phoneToUse = phone || adminPhone;
+        const phoneToUse = phone || await getAdminPhone();
         const messageToUse = message || 'Teste de mensagem do sistema de lembretes! 🚀';
 
         console.log(`📱 Testando envio para: ${phoneToUse}`);
@@ -2473,7 +2477,7 @@ app.post('/send-notification', async (req, res) => {
 
         console.log(`📬 Enviando notificação de ${type || 'follow-up'}...`);
 
-        const sent = await sendWhatsAppMessage(adminPhone, message);
+        const sent = await sendWhatsAppMessage(await getAdminPhone(), message);
 
         if (sent) {
             console.log('✅ Notificação de follow-up enviada com sucesso!');
@@ -2483,7 +2487,7 @@ app.post('/send-notification', async (req, res) => {
         } else {
             console.log('❌ Falha ao enviar notificação de follow-up');
             addNotificationLog('error', `Falha ao enviar notificação ${type || 'follow-up'}`, {
-                adminPhone,
+                adminPhone: await getAdminPhone(),
                 messageLength: message.length
             });
         }
@@ -2532,7 +2536,7 @@ app.post('/test-reminder-force', async (req, res) => {
 
         // Para admin
         const adminMessage = `📅 TESTE - Lembrete: Call com ${event.leads?.nome || 'lead'} em 30 minutos!\n\nEvento: ${event.title}`;
-        const sentAdmin = await sendWhatsAppMessage(adminPhone, adminMessage);
+        const sentAdmin = await sendWhatsAppMessage(await getAdminPhone(), adminMessage);
         if (sentAdmin) messagesSent++;
 
         res.json({
