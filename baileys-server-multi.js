@@ -68,6 +68,122 @@ const getAdminPhone = async (organizationId = 'default') => {
 };
 const defaultUserId = 'default'; // Usuário padrão para notificações
 
+// === FUNÇÕES PARA ENVIO MULTI-ORGANIZACIONAL ===
+
+// Função para buscar todas as organizações com WhatsApp ativo
+const getAllOrganizationsWithWhatsApp = async () => {
+  try {
+    console.log('🏢 Buscando todas as organizações com WhatsApp ativo...');
+
+    const { data: organizations, error } = await supabase
+      .from('organizations')
+      .select('id, name, admin_phone, owner_email')
+      .not('admin_phone', 'is', null)
+      .neq('admin_phone', '');
+
+    if (error) {
+      console.error('❌ Erro ao buscar organizações:', error);
+      return [];
+    }
+
+    console.log(`✅ ${organizations.length} organizações encontradas com WhatsApp`);
+
+    // Filtrar apenas organizações que têm sessão WhatsApp conectada
+    const activeOrganizations = [];
+
+    for (const org of organizations) {
+      const session = userSessions.get(org.id);
+      if (session && session.isReady) {
+        activeOrganizations.push(org);
+        console.log(`✅ ${org.name} (${org.id}) - WhatsApp CONECTADO`);
+      } else {
+        console.log(`⚠️ ${org.name} (${org.id}) - WhatsApp NÃO CONECTADO`);
+      }
+    }
+
+    console.log(`🚀 ${activeOrganizations.length} organizações prontas para envio`);
+    return activeOrganizations;
+
+  } catch (error) {
+    console.error('❌ Erro ao buscar organizações:', error);
+    return [];
+  }
+};
+
+// Função para enviar mensagem usando sessão específica da organização
+const sendWhatsAppMessageForOrganization = async (organizationId, phoneNumber, message) => {
+  const session = userSessions.get(organizationId);
+
+  if (!session || !session.sock || !session.isReady) {
+    console.error(`❌ [${organizationId}] WhatsApp não está conectado`);
+    return false;
+  }
+
+  try {
+    // Garantir que o número tenha o formato correto
+    let formattedNumber = phoneNumber.replace(/\D/g, '');
+    if (!formattedNumber.endsWith('@s.whatsapp.net')) {
+      formattedNumber += '@s.whatsapp.net';
+    }
+
+    let messageContent;
+    if (typeof message === 'object' && message !== null) {
+      messageContent = message;
+    } else {
+      messageContent = { text: message };
+    }
+
+    await session.sock.sendMessage(formattedNumber, messageContent);
+    console.log(`✅ [${organizationId}] Mensagem enviada para ${phoneNumber}`);
+    return true;
+
+  } catch (error) {
+    console.error(`❌ [${organizationId}] Erro ao enviar mensagem:`, error);
+    return false;
+  }
+};
+
+// Função para enviar resumo diário para todas as organizações
+const sendDailySummaryToAllOrganizations = async (summaryMessage) => {
+  try {
+    console.log('🌅 Enviando resumo diário para todas as organizações...');
+
+    const organizations = await getAllOrganizationsWithWhatsApp();
+
+    if (organizations.length === 0) {
+      console.log('⚠️ Nenhuma organização com WhatsApp conectado encontrada');
+      return false;
+    }
+
+    let successfulSends = 0;
+
+    for (const org of organizations) {
+      console.log(`📱 Enviando para: ${org.name} - ${org.admin_phone}`);
+
+      const sent = await sendWhatsAppMessageForOrganization(org.id, org.admin_phone, summaryMessage);
+
+      if (sent) {
+        successfulSends++;
+        console.log(`✅ ${org.name}: Resumo enviado com sucesso!`);
+      } else {
+        console.log(`❌ ${org.name}: Falha no envio`);
+      }
+
+      // Aguardar 2 segundos entre envios para evitar rate limiting
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+
+    console.log(`📊 RESUMO: ${successfulSends}/${organizations.length} organizações receberam a agenda`);
+    return successfulSends > 0;
+
+  } catch (error) {
+    console.error('❌ Erro no envio para todas as organizações:', error);
+    return false;
+  }
+};
+
+// === FIM DAS FUNÇÕES MULTI-ORGANIZACIONAIS ===
+
 // Configuração do SDR ANTIPLANTÃO - DESATIVADO
 // const targetPhone = '5511986784297'; // Número que o SDR deve responder
 const genAI = new GoogleGenerativeAI('AIzaSyCtkT3y-NwYgNWIotoBcDxvAmIDXN10vEY');
@@ -2198,7 +2314,7 @@ async function checkAndSendNotifications(isDailySummary = false) {
                 }
                 summaryMessage += '\n🚀 Tenha um dia produtivo!';
 
-                const sent = await sendWhatsAppMessage(await getAdminPhone(), summaryMessage);
+                const sent = await sendDailySummaryToAllOrganizations(summaryMessage);
                 if (sent) {
                     console.log('✅ Resumo diário enviado com sucesso!');
                     notificationsSent++;
@@ -2464,6 +2580,29 @@ app.post('/test-whatsapp', async (req, res) => {
 });
 
 // Endpoint para envio de notificações de follow-up
+app.post('/send-event-notification', async (req, res) => {
+    try {
+        const { message, eventData } = req.body;
+        console.log('🎯 [EVENT] Recebida notificação de novo evento:', { eventData });
+
+        // Enviar para todas as organizações
+        const successfulSends = await sendDailySummaryToAllOrganizations(message);
+
+        res.json({
+            success: true,
+            message: 'Notificação de evento enviada',
+            organizations_notified: successfulSends
+        });
+
+    } catch (error) {
+        console.error('❌ [EVENT] Erro ao enviar notificação de evento:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 app.post('/send-notification', async (req, res) => {
     try {
         const { message, type } = req.body;
