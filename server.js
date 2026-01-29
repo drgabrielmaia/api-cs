@@ -188,6 +188,244 @@ async function markEventMessageSent(eventId) {
     }
 }
 
+// Função para verificar organização do usuário por telefone
+async function getUserOrganization(phoneNumber) {
+    try {
+        // Remover caracteres especiais e código do país
+        let cleanPhone = phoneNumber.replace(/\D/g, '');
+
+        // Remover código do país (55)
+        if (cleanPhone.startsWith('55')) {
+            cleanPhone = cleanPhone.substring(2);
+        }
+
+        // Testar com e sem o 9
+        let numbersToTest = [];
+        if (cleanPhone.length === 10) {
+            // Número sem 9
+            numbersToTest = [
+                cleanPhone, // sem 9
+                cleanPhone.substring(0, 2) + '9' + cleanPhone.substring(2) // com 9
+            ];
+        } else if (cleanPhone.length === 11 && cleanPhone.charAt(2) === '9') {
+            // Número com 9
+            numbersToTest = [
+                cleanPhone, // com 9
+                cleanPhone.substring(0, 2) + cleanPhone.substring(3) // sem 9
+            ];
+        } else {
+            numbersToTest = [cleanPhone];
+        }
+
+        console.log(`🔍 Buscando organização para números: ${numbersToTest.join(', ')}`);
+
+        // Buscar na tabela organizations por owner_phone
+        for (const testPhone of numbersToTest) {
+            const { data: org, error } = await supabase
+                .from('organizations')
+                .select('*')
+                .eq('owner_phone', testPhone)
+                .single();
+
+            if (org && !error) {
+                console.log(`✅ Organização encontrada: ${org.name} para telefone ${testPhone}`);
+                return org;
+            }
+        }
+
+        console.log(`❌ Nenhuma organização encontrada para ${phoneNumber}`);
+        return null;
+    } catch (error) {
+        console.error('❌ Erro ao buscar organização:', error);
+        return null;
+    }
+}
+
+// Função para processar comando agenda
+async function handleAgendaCommand(phoneNumber) {
+    try {
+        // Verificar se o usuário pertence a uma organização
+        const organization = await getUserOrganization(phoneNumber);
+
+        if (!organization) {
+            return '❌ Você não faz parte de uma administração autorizada para usar este comando.';
+        }
+
+        console.log(`📋 Buscando agenda para organização: ${organization.name}`);
+
+        // Buscar eventos do dia para a organização
+        const events = await getEventsForOrganization(organization.id);
+
+        if (!events || events.length === 0) {
+            return `📅 *Agenda do dia* (${new Date().toLocaleDateString('pt-BR')})\n\n✅ Nenhum compromisso agendado para hoje.`;
+        }
+
+        let agendaMessage = `📅 *Agenda do dia* (${new Date().toLocaleDateString('pt-BR')})\n\n`;
+
+        events.forEach((event, index) => {
+            const eventStart = new Date(event.start_datetime);
+            const timeStr = eventStart.toLocaleTimeString('pt-BR', {
+                hour: '2-digit',
+                minute: '2-digit',
+                timeZone: 'America/Sao_Paulo'
+            });
+
+            let participantName = 'Participante não identificado';
+            if (event.mentorados && event.mentorados.nome_completo) {
+                participantName = event.mentorados.nome_completo + ' (Mentorado)';
+            } else if (event.leads && event.leads.nome_completo) {
+                participantName = event.leads.nome_completo + ' (Lead)';
+            }
+
+            agendaMessage += `${index + 1}. ${timeStr} - ${event.title}\n`;
+            agendaMessage += `   👤 ${participantName}\n\n`;
+        });
+
+        agendaMessage += '\n❓ *Você deseja ver informação de mais algum lead?*\n';
+        agendaMessage += '📝 Se sim, digite a numeração da reunião.';
+
+        // Armazenar temporariamente os eventos para consulta posterior
+        global.userAgendaData = global.userAgendaData || {};
+        global.userAgendaData[phoneNumber] = events;
+
+        return agendaMessage;
+    } catch (error) {
+        console.error('❌ Erro ao processar comando agenda:', error);
+        return '❌ Erro ao buscar agenda. Tente novamente em alguns instantes.';
+    }
+}
+
+// Função para buscar eventos da organização
+async function getEventsForOrganization(organizationId) {
+    try {
+        // Usar timezone correto de São Paulo
+        const saoPauloTime = new Date(getSaoPauloTime());
+        const todayStart = new Date(saoPauloTime.getFullYear(), saoPauloTime.getMonth(), saoPauloTime.getDate());
+        const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
+
+        // Converter para UTC para consulta no banco
+        const todayStartUTC = new Date(todayStart.getTime() - saoPauloTime.getTimezoneOffset() * 60000);
+        const todayEndUTC = new Date(todayEnd.getTime() - saoPauloTime.getTimezoneOffset() * 60000);
+
+        const { data: events, error } = await supabase
+            .from('calendar_events')
+            .select(`
+                id,
+                title,
+                description,
+                start_datetime,
+                end_datetime,
+                mentorado_id,
+                lead_id,
+                organization_id,
+                mentorados (
+                    nome_completo,
+                    telefone,
+                    temperatura
+                ),
+                leads (
+                    nome_completo,
+                    telefone,
+                    temperatura,
+                    observacoes,
+                    status,
+                    origem
+                )
+            `)
+            .eq('organization_id', organizationId)
+            .gte('start_datetime', todayStartUTC.toISOString())
+            .lte('start_datetime', todayEndUTC.toISOString())
+            .order('start_datetime');
+
+        if (error) {
+            console.error('❌ Erro ao buscar eventos da organização:', error);
+            return [];
+        }
+
+        return events || [];
+    } catch (error) {
+        console.error('❌ Erro na consulta de eventos da organização:', error);
+        return [];
+    }
+}
+
+// Função para processar comando de detalhes do lead
+async function handleLeadDetailsCommand(phoneNumber, meetingNumber) {
+    try {
+        // Verificar se o usuário tem agenda armazenada
+        if (!global.userAgendaData || !global.userAgendaData[phoneNumber]) {
+            return '❌ Primeiro digite "agenda" para ver a lista de compromissos do dia.';
+        }
+
+        const events = global.userAgendaData[phoneNumber];
+        const selectedEvent = events[meetingNumber - 1];
+
+        if (!selectedEvent) {
+            return `❌ Reunião número ${meetingNumber} não encontrada. Digite "agenda" para ver a lista completa.`;
+        }
+
+        let detailsMessage = `📋 *Detalhes da Reunião ${meetingNumber}*\n\n`;
+
+        const eventStart = new Date(selectedEvent.start_datetime);
+        const timeStr = eventStart.toLocaleTimeString('pt-BR', {
+            hour: '2-digit',
+            minute: '2-digit',
+            timeZone: 'America/Sao_Paulo'
+        });
+
+        detailsMessage += `⏰ *Horário:* ${timeStr}\n`;
+        detailsMessage += `📝 *Título:* ${selectedEvent.title}\n\n`;
+
+        // Informações do participante
+        if (selectedEvent.leads && selectedEvent.leads.nome_completo) {
+            const lead = selectedEvent.leads;
+            detailsMessage += `👤 *LEAD - ${lead.nome_completo}*\n`;
+            detailsMessage += `📞 *Telefone:* ${lead.telefone || 'Não informado'}\n`;
+            detailsMessage += `🌡️ *Temperatura:* ${getTemperatureEmoji(lead.temperatura)} ${lead.temperatura || 'Não definida'}\n`;
+            detailsMessage += `📊 *Status:* ${lead.status || 'Não definido'}\n`;
+            detailsMessage += `🎯 *Origem:* ${lead.origem || 'Não informada'}\n`;
+
+            if (lead.observacoes) {
+                detailsMessage += `📋 *Observações:*\n${lead.observacoes}\n`;
+            }
+        } else if (selectedEvent.mentorados && selectedEvent.mentorados.nome_completo) {
+            const mentorado = selectedEvent.mentorados;
+            detailsMessage += `👤 *MENTORADO - ${mentorado.nome_completo}*\n`;
+            detailsMessage += `📞 *Telefone:* ${mentorado.telefone || 'Não informado'}\n`;
+            detailsMessage += `🌡️ *Temperatura:* ${getTemperatureEmoji(mentorado.temperatura)} ${mentorado.temperatura || 'Não definida'}\n`;
+        }
+
+        if (selectedEvent.description) {
+            detailsMessage += `\n📄 *Descrição:*\n${selectedEvent.description}\n`;
+        }
+
+        detailsMessage += '\n❓ *Deseja ver outro lead?*\n';
+        detailsMessage += '📝 Digite o número da reunião ou "agenda" para ver a lista completa.';
+
+        return detailsMessage;
+    } catch (error) {
+        console.error('❌ Erro ao processar detalhes do lead:', error);
+        return '❌ Erro ao buscar detalhes. Tente novamente.';
+    }
+}
+
+// Função auxiliar para emojis de temperatura
+function getTemperatureEmoji(temp) {
+    switch(temp?.toLowerCase()) {
+        case 'quente':
+        case 'hot':
+            return '🔥';
+        case 'morno':
+        case 'warm':
+            return '🟡';
+        case 'frio':
+        case 'cold':
+            return '❄️';
+        default:
+            return '⚪';
+    }
+}
+
 function initializeClient() {
     client = new Client();
 
@@ -270,6 +508,33 @@ function initializeClient() {
                 console.log('✅ Pong enviado!');
             } catch (error) {
                 console.error('❌ Erro ao responder:', error);
+            }
+        }
+
+        // Comando agenda
+        if (!msg.fromMe && msg.body.toLowerCase().trim() === 'agenda') {
+            try {
+                console.log('📅 Processando comando agenda...');
+                const response = await handleAgendaCommand(msg.from);
+                await msg.reply(response);
+                console.log('✅ Agenda enviada!');
+            } catch (error) {
+                console.error('❌ Erro ao processar agenda:', error);
+                await msg.reply('❌ Erro ao buscar agenda. Tente novamente.');
+            }
+        }
+
+        // Comando para detalhes de lead (numeração)
+        if (!msg.fromMe && /^\d+$/.test(msg.body.trim())) {
+            try {
+                console.log('🔍 Processando comando de numeração...');
+                const response = await handleLeadDetailsCommand(msg.from, parseInt(msg.body.trim()));
+                if (response) {
+                    await msg.reply(response);
+                    console.log('✅ Detalhes do lead enviados!');
+                }
+            } catch (error) {
+                console.error('❌ Erro ao processar detalhes do lead:', error);
             }
         }
     });

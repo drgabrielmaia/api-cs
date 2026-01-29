@@ -1,0 +1,10 @@
+{
+  "default": {
+    "adminPhone": "+5583996910414",
+    "whatsappNotifications": true,
+    "timezone": "America/Sao_Paulo",
+    "businessHoursStart": "09:00",
+    "businessHoursEnd": "18:00",
+    "calendarReminderHours": 24
+  }
+}
