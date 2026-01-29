@@ -913,8 +913,75 @@ Qual sua especialidade?`;
                 }
         }
 
+        // Lógica para responder perguntas sobre agenda/reuniões
+        const msgLower = messageText.toLowerCase();
+
+        // Palavras-chave para agenda/reuniões
+        const agendaKeywords = ['agenda', 'reunião', 'reuniao', 'meeting', 'call', 'encontro', 'compromisso', 'horário', 'horario'];
+        const questionWords = ['quando', 'que horas', 'qual', 'onde', 'quem', 'como'];
+
+        const hasAgendaKeyword = agendaKeywords.some(keyword => msgLower.includes(keyword));
+        const hasQuestionWord = questionWords.some(word => msgLower.includes(word));
+
+        if (hasAgendaKeyword || (hasQuestionWord && (msgLower.includes('hoje') || msgLower.includes('amanhã') || msgLower.includes('amanha')))) {
+            try {
+                console.log(`📅 [${userId}] Pergunta sobre agenda detectada, enviando opções...`);
+
+                const responseMessage = `📅 *Informações da Agenda*
+
+Qual informação você gostaria de saber sobre as reuniões?
+
+🕐 *1* - Horários das reuniões
+👥 *2* - Participantes
+🔗 *3* - Links de acesso
+📋 *4* - Agenda completa do dia
+📍 *5* - Locais das reuniões
+⏰ *6* - Próxima reunião
+
+_Digite o número da opção desejada ou digite sua pergunta específica._`;
+
+                await session.sock.sendMessage(message.key.remoteJid, { text: responseMessage });
+                console.log(`✅ [${userId}] Menu de agenda enviado!`);
+            } catch (error) {
+                console.error(`❌ [${userId}] Erro ao enviar menu de agenda:`, error);
+            }
+        }
+
+        // Resposta para opções numeradas (1-6)
+        else if (/^[1-6]$/.test(msgLower.trim())) {
+            try {
+                let response = '';
+
+                switch (msgLower.trim()) {
+                    case '1':
+                        response = '🕐 *Horários das Reuniões de Hoje:*\n\n• 09:00 - Reunião de Equipe\n• 14:30 - Call com Cliente\n• 16:00 - Revisão de Projeto';
+                        break;
+                    case '2':
+                        response = '👥 *Participantes das Reuniões:*\n\n• 09:00 - João, Maria, Pedro\n• 14:30 - Ana, Carlos\n• 16:00 - Toda a equipe';
+                        break;
+                    case '3':
+                        response = '🔗 *Links de Acesso:*\n\n• 09:00 - meet.google.com/abc-defg-hij\n• 14:30 - zoom.us/j/123456789\n• 16:00 - teams.microsoft.com/xyz';
+                        break;
+                    case '4':
+                        response = '📋 *Agenda Completa de Hoje:*\n\n🕘 **09:00-10:00** | Reunião de Equipe\n📍 Sala de Reuniões\n👥 João, Maria, Pedro\n\n🕜 **14:30-15:30** | Call com Cliente\n🔗 zoom.us/j/123456789\n👥 Ana, Carlos\n\n🕟 **16:00-17:00** | Revisão de Projeto\n📍 Sala Principal\n👥 Toda a equipe';
+                        break;
+                    case '5':
+                        response = '📍 *Locais das Reuniões:*\n\n• 09:00 - Sala de Reuniões (2º andar)\n• 14:30 - Online (Zoom)\n• 16:00 - Sala Principal (1º andar)';
+                        break;
+                    case '6':
+                        response = '⏰ *Próxima Reunião:*\n\n📅 **Hoje às 14:30**\n🎯 Call com Cliente\n👥 Ana, Carlos\n🔗 zoom.us/j/123456789\n⏳ Faltam 2 horas e 15 minutos';
+                        break;
+                }
+
+                await session.sock.sendMessage(message.key.remoteJid, { text: response });
+                console.log(`✅ [${userId}] Resposta da opção ${msgLower.trim()} enviada!`);
+            } catch (error) {
+                console.error(`❌ [${userId}] Erro ao enviar resposta da agenda:`, error);
+            }
+        }
+
         // Manter ping/pong para testes
-        if (messageText.toLowerCase().includes('ping')) {
+        else if (messageText.toLowerCase().includes('ping')) {
             try {
                 await session.sock.sendMessage(message.key.remoteJid, { text: 'pong' });
                 console.log(`✅ [${userId}] Pong enviado!`);
