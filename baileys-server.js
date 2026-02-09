@@ -39,14 +39,198 @@ function getSaoPauloTime() {
     return new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
 }
 
-// Função para limpar número de telefone de sufixos WhatsApp e extrair de @lid
-function cleanPhoneNumber(phoneId) {
+// Storage para mapear @lid para números reais encontrados
+const lidToPhoneMap = new Map();
+
+// Função para extrair números reais de várias propriedades - VERSÃO AVANÇADA
+async function extractRealPhoneNumber(contact, chatId) {
+    if (!contact && !chatId) return '';
+    
+    // ⭐ PRIORIDADE 1: Verificar cache em memória
+    if (chatId && lidToPhoneMap.has(chatId)) {
+        console.log(`💾 Cache: ${chatId} → ${lidToPhoneMap.get(chatId)}`);
+        return lidToPhoneMap.get(chatId);
+    }
+    
+    // ⭐ PRIORIDADE 2: Verificar banco de dados
+    if (chatId && chatId.includes('@lid')) {
+        const dbNumber = await getLidMappingFromDatabase(chatId);
+        if (dbNumber) {
+            lidToPhoneMap.set(chatId, dbNumber); // Salvar no cache também
+            return dbNumber;
+        }
+    }
+    
+    // Lista de possíveis números para testar
+    let possibleNumbers = [];
+    
+    // 3. Se tem contact, verificar várias propriedades
+    if (contact) {
+        if (contact.phone) possibleNumbers.push(contact.phone);
+        if (contact.phoneNumber) possibleNumbers.push(contact.phoneNumber);
+        if (contact.number) possibleNumbers.push(contact.number);
+        if (contact.verifiedName) {
+            const phoneFromName = contact.verifiedName.match(/(\d{10,15})/);
+            if (phoneFromName) possibleNumbers.push(phoneFromName[1]);
+        }
+        if (contact.notify && /^\+?\d{10,15}$/.test(contact.notify.replace(/\D/g, ''))) {
+            possibleNumbers.push(contact.notify.replace(/\D/g, ''));
+        }
+    }
+    
+    // 4. Procurar mensagens anteriores desta pessoa com número real
+    if (possibleNumbers.length === 0 && chatId) {
+        const realNumber = findRealNumberInHistory(chatId);
+        if (realNumber) {
+            lidToPhoneMap.set(chatId, realNumber);
+            await saveLidMappingToDatabase(chatId, realNumber);
+            return realNumber;
+        }
+    }
+    
+    // ⭐ PRIORIDADE 5: Tentar resolver via API do WhatsApp
+    if (possibleNumbers.length === 0 && chatId && chatId.includes('@lid')) {
+        const apiNumber = await resolveLidViaAPI(chatId);
+        if (apiNumber) {
+            lidToPhoneMap.set(chatId, apiNumber);
+            await saveLidMappingToDatabase(chatId, apiNumber);
+            return apiNumber;
+        }
+    }
+    
+    // 6. Filtrar e validar números encontrados nas propriedades
+    for (let num of possibleNumbers) {
+        const cleanNum = num.replace(/\D/g, '');
+        if (cleanNum.length >= 10 && cleanNum.length <= 15) {
+            // Salvar mapeamento se for @lid
+            if (chatId && chatId.includes('@lid')) {
+                lidToPhoneMap.set(chatId, cleanNum);
+                await saveLidMappingToDatabase(chatId, cleanNum);
+            }
+            return cleanNum;
+        }
+    }
+    
+    return '';
+}
+
+// ⭐ SOLUÇÃO 2: Resolver @lid usando API do WhatsApp
+async function resolveLidViaAPI(lidId) {
+    try {
+        console.log(`🔍 Tentando resolver ${lidId} via API...`);
+        
+        // Tentar endpoint de contatos
+        if (sock && sock.onWhatsApp) {
+            const result = await sock.onWhatsApp(lidId);
+            if (result && result.length > 0 && result[0].jid) {
+                const resolvedJid = result[0].jid;
+                if (resolvedJid.includes('@s.whatsapp.net')) {
+                    const realNumber = resolvedJid.replace('@s.whatsapp.net', '');
+                    console.log(`🎯 API resolveu ${lidId} → ${realNumber}`);
+                    return realNumber;
+                }
+            }
+        }
+        
+        // Tentar buscar info do contato diretamente
+        if (sock && sock.fetchContact) {
+            const contactInfo = await sock.fetchContact(lidId);
+            if (contactInfo && contactInfo.number) {
+                console.log(`🎯 FetchContact resolveu ${lidId} → ${contactInfo.number}`);
+                return contactInfo.number;
+            }
+        }
+        
+    } catch (error) {
+        console.log(`❌ Erro ao resolver ${lidId} via API:`, error.message);
+    }
+    return null;
+}
+
+// ⭐ SOLUÇÃO 3: Salvar mapeamento no banco de dados
+async function saveLidMappingToDatabase(lidId, realNumber) {
+    try {
+        const { data, error } = await supabase
+            .from('lid_phone_mappings')
+            .upsert({
+                lid_id: lidId,
+                real_phone: realNumber,
+                updated_at: new Date().toISOString()
+            }, { 
+                onConflict: 'lid_id' 
+            });
+            
+        if (error) {
+            console.log('❌ Erro ao salvar mapeamento LID no BD:', error.message);
+        } else {
+            console.log(`💾 Mapeamento salvo no BD: ${lidId} → ${realNumber}`);
+        }
+    } catch (error) {
+        console.log('❌ Erro ao salvar no BD:', error.message);
+    }
+}
+
+// ⭐ SOLUÇÃO 3: Buscar mapeamento salvo no banco de dados
+async function getLidMappingFromDatabase(lidId) {
+    try {
+        const { data, error } = await supabase
+            .from('lid_phone_mappings')
+            .select('real_phone')
+            .eq('lid_id', lidId)
+            .single();
+            
+        if (data && data.real_phone) {
+            console.log(`💾 Mapeamento encontrado no BD: ${lidId} → ${data.real_phone}`);
+            return data.real_phone;
+        }
+    } catch (error) {
+        console.log('Erro ao buscar no BD:', error.message);
+    }
+    return null;
+}
+
+// Função para procurar número real no histórico de mensagens
+function findRealNumberInHistory(lidId) {
+    try {
+        // Procurar nas mensagens se existe alguma da mesma pessoa mas com @s.whatsapp.net
+        for (const message of messagesList) {
+            if (message.contact && message.contact.id && message.contact.id.includes('@s.whatsapp.net')) {
+                // Verificar se é a mesma pessoa comparando pushName ou outras propriedades
+                const msgFromLid = messagesList.find(m => 
+                    m.contact.id === lidId && 
+                    m.contact.pushname && 
+                    message.contact.pushname &&
+                    m.contact.pushname.toLowerCase() === message.contact.pushname.toLowerCase()
+                );
+                
+                if (msgFromLid) {
+                    return message.contact.id.replace('@s.whatsapp.net', '');
+                }
+            }
+        }
+    } catch (error) {
+        console.log('Erro ao procurar número no histórico:', error.message);
+    }
+    return null;
+}
+
+// Função para limpar número de telefone de sufixos WhatsApp e extrair número real
+async function cleanPhoneNumber(phoneId, contact = null) {
     if (!phoneId) return '';
     
-    // Se é @lid, extrair o número real (ex: 89181254594721:98@lid -> 89181254594721)
+    // Se é @lid, tentar extrair número real primeiro usando TODAS as soluções
     if (phoneId.includes('@lid')) {
+        const realNumber = await extractRealPhoneNumber(contact, phoneId);
+        if (realNumber) {
+            console.log(`🎯 SUCESSO! Número real encontrado para ${phoneId}: ${realNumber}`);
+            return realNumber;
+        }
+        
+        // Se não achou, extrair ID básico
         const match = phoneId.match(/(\d+):/);
-        return match ? match[1] : phoneId.replace('@lid', '');
+        const extracted = match ? match[1] : phoneId.replace('@lid', '');
+        console.log(`⚠️ Fallback - Usando ID @lid para ${phoneId}: ${extracted}`);
+        return extracted;
     }
     
     return phoneId
@@ -310,6 +494,32 @@ async function connectToWhatsApp() {
 
         // Ignorar apenas mensagens de status/stories
         if (message.key.remoteJid === 'status@broadcast') return;
+        
+        // Debug e extração avançada para @lid
+        if (message.key.remoteJid && message.key.remoteJid.includes('@lid')) {
+            console.log('🔍 DEBUG @lid detectado:', {
+                remoteJid: message.key.remoteJid,
+                participant: message.key.participant, // ⭐ ESTA É A CHAVE!
+                pushName: message.pushName,
+                notify: message.notify,
+                verifiedName: message.verifiedName,
+                fromMe: message.key.fromMe,
+                allProperties: Object.keys(message),
+                messageKey: message.key
+            });
+            
+            // ⭐ SOLUÇÃO 1: Verificar participant (principalmente em grupos)
+            if (message.key.participant && message.key.participant.includes('@s.whatsapp.net')) {
+                const realNumber = message.key.participant.replace('@s.whatsapp.net', '');
+                console.log(`🎯 NÚMERO REAL ENCONTRADO no participant: ${realNumber}`);
+                
+                // Salvar mapeamento no cache
+                lidToPhoneMap.set(message.key.remoteJid, realNumber);
+                
+                // ⭐ SOLUÇÃO 3: Salvar no BD para próximas vezes
+                saveLidMappingToDatabase(message.key.remoteJid, realNumber);
+            }
+        }
 
         const chatId = message.key.remoteJid;
         const isGroup = chatId.endsWith('@g.us');
@@ -341,7 +551,7 @@ async function connectToWhatsApp() {
                 id: chatId,
                 name: chatName,
                 pushname: message.pushName || '',
-                number: isGroup ? chatId : cleanPhoneNumber(chatId)
+                number: isGroup ? chatId : cleanPhoneNumber(chatId, message)
             }
         };
 
@@ -362,9 +572,9 @@ async function connectToWhatsApp() {
             if (!existingContact) {
                 const newContact = {
                     id: chatId,
-                    name: message.pushName || cleanPhoneNumber(chatId),
+                    name: message.pushName || cleanPhoneNumber(chatId, message),
                     pushname: message.pushName || '',
-                    number: cleanPhoneNumber(chatId),
+                    number: cleanPhoneNumber(chatId, message),
                     isMyContact: true
                 };
                 contacts.push(newContact);
@@ -1511,6 +1721,84 @@ async function checkAndSendAutoMessages() {
 
 // Configurar cron job para verificar mensagens automáticas a cada minuto
 cron.schedule('* * * * *', checkAndSendAutoMessages);
+
+// ⭐ ENDPOINT para resolver @lid manualmente
+app.post('/resolve-lid', async (req, res) => {
+    try {
+        const { lidId } = req.body;
+        
+        if (!lidId) {
+            return res.json({ 
+                success: false, 
+                error: 'lidId é obrigatório' 
+            });
+        }
+        
+        console.log(`🔍 Tentando resolver ${lidId}...`);
+        
+        // Usar todas as soluções implementadas
+        const realNumber = await extractRealPhoneNumber(null, lidId);
+        
+        if (realNumber) {
+            res.json({
+                success: true,
+                lidId: lidId,
+                realNumber: realNumber,
+                message: `LID resolvido com sucesso: ${lidId} → ${realNumber}`
+            });
+        } else {
+            res.json({
+                success: false,
+                lidId: lidId,
+                error: 'Não foi possível resolver o LID para número real',
+                suggestions: [
+                    'Verifique se a pessoa enviou mensagem em grupo (participant)',
+                    'Aguarde a pessoa enviar nova mensagem',
+                    'Verifique se existe no banco de dados'
+                ]
+            });
+        }
+        
+    } catch (error) {
+        console.error('❌ Erro no endpoint resolve-lid:', error);
+        res.json({ 
+            success: false, 
+            error: 'Erro interno ao resolver LID' 
+        });
+    }
+});
+
+// Endpoint para ver todos os mapeamentos salvos
+app.get('/lid-mappings', async (req, res) => {
+    try {
+        // Mostrar cache em memória
+        const cacheMapping = {};
+        lidToPhoneMap.forEach((phone, lid) => {
+            cacheMapping[lid] = phone;
+        });
+        
+        // Buscar do banco de dados
+        const { data: dbMappings, error } = await supabase
+            .from('lid_phone_mappings')
+            .select('*')
+            .order('updated_at', { ascending: false });
+            
+        res.json({
+            success: true,
+            cache: cacheMapping,
+            database: dbMappings || [],
+            total_cache: lidToPhoneMap.size,
+            total_database: dbMappings?.length || 0
+        });
+        
+    } catch (error) {
+        console.error('❌ Erro ao buscar mapeamentos:', error);
+        res.json({ 
+            success: false, 
+            error: 'Erro ao buscar mapeamentos' 
+        });
+    }
+});
 
 app.listen(port, async () => {
     console.log(`🚀 WhatsApp Baileys API rodando em http://localhost:${port}`);
