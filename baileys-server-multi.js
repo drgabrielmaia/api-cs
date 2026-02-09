@@ -1031,7 +1031,12 @@ _Digite o número da opção desejada ou digite sua pergunta específica._`;
 
                 let response = `💰 *FATURAMENTO DE ${faturamento.mesAno}*\n\n`;
                 response += `📅 *Período:* ${faturamento.periodo}\n\n`;
-                response += `📊 *RECEITA DO MÊS:*\n`;
+                
+                if (faturamento.isExample) {
+                    response += `⚠️ *Nenhuma venda no mês atual. Mostrando vendas recentes:*\n\n`;
+                }
+                
+                response += `📊 *RECEITA ${faturamento.isExample ? 'DAS VENDAS' : 'DO MÊS'}:*\n`;
                 response += `💵 Total Faturado: R$ ${faturamento.totalFaturado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n`;
                 response += `📈 Total de ${faturamento.vendas.length} venda(s)\n\n`;
 
@@ -2377,7 +2382,8 @@ async function getFaturamentoForOrganization(organizationId) {
 
         console.log(`📅 Buscando vendas do período: ${firstDayOfMonth} até ${lastDayOfMonthStr}`);
 
-        const { data: vendas, error } = await supabase
+        // Primeiro tentar buscar vendas da organização específica
+        let { data: vendas, error } = await supabase
             .from('leads')
             .select(`
                 id,
@@ -2391,6 +2397,67 @@ async function getFaturamentoForOrganization(organizationId) {
             .gte('data_venda', firstDayOfMonth)
             .lte('data_venda', lastDayOfMonthStr)
             .order('data_venda', { ascending: false });
+
+        // Se não encontrar vendas da organização no mês atual, buscar leads vendidos sem organização (dados legacy)
+        if (!error && (!vendas || vendas.length === 0)) {
+            console.log('📝 Nenhuma venda encontrada na organização no mês atual, buscando dados legacy...');
+            
+            const { data: vendasLegacy, error: errorLegacy } = await supabase
+                .from('leads')
+                .select(`
+                    id,
+                    nome_completo,
+                    valor_vendido,
+                    data_venda,
+                    status
+                `)
+                .is('organization_id', null)
+                .eq('status', 'vendido')
+                .gte('data_venda', firstDayOfMonth)
+                .lte('data_venda', lastDayOfMonthStr)
+                .order('data_venda', { ascending: false });
+            
+            if (!errorLegacy) {
+                vendas = vendasLegacy;
+                console.log(`📊 ${vendas?.length || 0} vendas legacy encontradas no mês atual`);
+            }
+            
+            // Se ainda não encontrar no mês atual, buscar as vendas mais recentes como exemplo
+            if (!vendas || vendas.length === 0) {
+                console.log('📝 Nenhuma venda no mês atual, buscando vendas recentes como exemplo...');
+                
+                const { data: vendasRecentes, error: errorRecentes } = await supabase
+                    .from('leads')
+                    .select(`
+                        id,
+                        nome_completo,
+                        valor_vendido,
+                        data_venda,
+                        status
+                    `)
+                    .is('organization_id', null)
+                    .eq('status', 'vendido')
+                    .not('data_venda', 'is', null)
+                    .order('data_venda', { ascending: false })
+                    .limit(5);
+                
+                if (!errorRecentes && vendasRecentes && vendasRecentes.length > 0) {
+                    vendas = vendasRecentes;
+                    console.log(`📊 ${vendas.length} vendas recentes encontradas como exemplo`);
+                    
+                    // Atualizar período para mostrar que são vendas de outros meses
+                    const primeiraVenda = new Date(vendasRecentes[0].data_venda);
+                    const ultimaVenda = new Date(vendasRecentes[vendasRecentes.length - 1].data_venda);
+                    return {
+                        totalFaturado: vendas.reduce((sum, venda) => sum + (venda.valor_vendido || 0), 0),
+                        vendas: vendas,
+                        periodo: `${ultimaVenda.toLocaleDateString('pt-BR')} até ${primeiraVenda.toLocaleDateString('pt-BR')}`,
+                        mesAno: 'Vendas Recentes (exemplo)',
+                        isExample: true
+                    };
+                }
+            }
+        }
 
         console.log('💰 DEBUG - Query vendas:', { error, count: vendas?.length || 0 });
         if (error) {
@@ -2419,9 +2486,19 @@ async function getPendenciasForOrganization(organizationId) {
     try {
         console.log('⚠️ Buscando pendências para organização ID:', organizationId);
 
-        // Buscar dívidas pendentes ou atrasadas
-        // Como não há organization_id na tabela dividas, vamos buscar todas pendentes/atrasadas
-        // e filtrar pelos mentorados da organização
+        // Usar timezone de São Paulo para calcular período do mês atual
+        const saoPauloTime = new Date(getSaoPauloTime());
+        const currentYear = saoPauloTime.getFullYear();
+        const currentMonth = saoPauloTime.getMonth() + 1;
+        
+        // Primeiro e último dia do mês atual
+        const firstDayOfMonth = `${currentYear}-${currentMonth.toString().padStart(2, '0')}-01`;
+        const lastDayOfMonth = new Date(currentYear, currentMonth, 0).getDate();
+        const lastDayOfMonthStr = `${currentYear}-${currentMonth.toString().padStart(2, '0')}-${lastDayOfMonth.toString().padStart(2, '0')}`;
+
+        console.log(`📅 Buscando pendências do período: ${firstDayOfMonth} até ${lastDayOfMonthStr}`);
+
+        // Buscar dívidas pendentes ou atrasadas do mês atual
         const { data: pendencias, error } = await supabase
             .from('dividas')
             .select(`
@@ -2437,6 +2514,8 @@ async function getPendenciasForOrganization(organizationId) {
             `)
             .eq('mentorados.organization_id', organizationId)
             .in('status', ['pendente', 'atrasado'])
+            .gte('data_vencimento', firstDayOfMonth)
+            .lte('data_vencimento', lastDayOfMonthStr)
             .order('data_vencimento', { ascending: true });
 
         console.log('⚠️ DEBUG - Query pendências:', { error, count: pendencias?.length || 0 });
@@ -2445,7 +2524,7 @@ async function getPendenciasForOrganization(organizationId) {
             return [];
         }
 
-        console.log(`⚠️ Pendências encontradas: ${pendencias?.length || 0}`);
+        console.log(`⚠️ Pendências do mês encontradas: ${pendencias?.length || 0}`);
 
         return pendencias || [];
     } catch (error) {
