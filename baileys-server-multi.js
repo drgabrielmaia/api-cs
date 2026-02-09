@@ -1000,6 +1000,172 @@ _Digite o número da opção desejada ou digite sua pergunta específica._`;
             }
         }
 
+        // Comando faturamento (apenas em conversa privada)
+        else if (messageText.toLowerCase().trim() === 'faturamento') {
+            try {
+                // Verificar se é conversa privada (não é grupo)
+                if (chatId.includes('@g.us')) {
+                    await session.sock.sendMessage(chatId, { 
+                        text: '🔒 Este comando só funciona em conversa privada por questões de segurança.' 
+                    });
+                    return;
+                }
+
+                console.log(`💰 [${userId}] Comando faturamento detectado...`);
+                
+                const organization = await getUserOrganization(chatId);
+                
+                if (!organization) {
+                    await session.sock.sendMessage(chatId, { 
+                        text: '❌ Você não faz parte de uma organização autorizada para usar este comando.' 
+                    });
+                    return;
+                }
+
+                console.log('🏢 Organização encontrada para faturamento:', {
+                    id: organization.id,
+                    name: organization.name
+                });
+
+                const faturamento = await getFaturamentoForOrganization(organization.id);
+                const now = new Date();
+                const monthName = now.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+
+                let response = `💰 *FATURAMENTO DE ${monthName.toUpperCase()}*\n\n`;
+                response += `📊 *RESUMO FINANCEIRO:*\n`;
+                response += `• 💵 Total Faturado: R$ ${faturamento.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n`;
+                response += `• ✅ Arrecadado: R$ ${faturamento.arrecadado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n`;
+                response += `• ⏳ Pendente: R$ ${faturamento.pendente.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n\n`;
+
+                if (faturamento.items && faturamento.items.length > 0) {
+                    response += `📋 *DETALHAMENTO (${faturamento.items.length} itens):*\n\n`;
+                    
+                    faturamento.items.slice(0, 10).forEach((item, index) => {
+                        const data = new Date(item.data_faturamento).toLocaleDateString('pt-BR');
+                        const status = item.status === 'pago' ? '✅' : '⏳';
+                        const cliente = item.leads?.nome_completo || item.mentorados?.nome_completo || 'Cliente não identificado';
+                        
+                        response += `${index + 1}. ${status} R$ ${item.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n`;
+                        response += `   📅 ${data} - ${cliente}\n`;
+                        if (item.descricao) {
+                            response += `   📝 ${item.descricao}\n`;
+                        }
+                        response += '\n';
+                    });
+
+                    if (faturamento.items.length > 10) {
+                        response += `... e mais ${faturamento.items.length - 10} itens\n`;
+                    }
+                } else {
+                    response += '📝 Nenhum faturamento registrado este mês.';
+                }
+
+                await session.sock.sendMessage(chatId, { text: response });
+                console.log(`✅ [${userId}] Faturamento enviado!`);
+            } catch (error) {
+                console.error(`❌ [${userId}] Erro ao processar faturamento:`, error);
+                await session.sock.sendMessage(chatId, { 
+                    text: '❌ Erro ao buscar faturamento. Tente novamente.' 
+                });
+            }
+        }
+
+        // Comando pendencias/pendencia (apenas em conversa privada)
+        else if (['pendencia', 'pendencias'].includes(messageText.toLowerCase().trim())) {
+            try {
+                // Verificar se é conversa privada (não é grupo)
+                if (chatId.includes('@g.us')) {
+                    await session.sock.sendMessage(chatId, { 
+                        text: '🔒 Este comando só funciona em conversa privada por questões de segurança.' 
+                    });
+                    return;
+                }
+
+                console.log(`⚠️ [${userId}] Comando pendências detectado...`);
+                
+                const organization = await getUserOrganization(chatId);
+                
+                if (!organization) {
+                    await session.sock.sendMessage(chatId, { 
+                        text: '❌ Você não faz parte de uma organização autorizada para usar este comando.' 
+                    });
+                    return;
+                }
+
+                console.log('🏢 Organização encontrada para pendências:', {
+                    id: organization.id,
+                    name: organization.name
+                });
+
+                const pendencias = await getPendenciasForOrganization(organization.id);
+
+                if (!pendencias || pendencias.length === 0) {
+                    await session.sock.sendMessage(chatId, { 
+                        text: '✅ *PENDÊNCIAS FINANCEIRAS*\n\nNenhuma pendência encontrada! 🎉\nTodos os pagamentos estão em dia.' 
+                    });
+                    return;
+                }
+
+                const totalPendente = pendencias.reduce((sum, lead) => {
+                    const valorPendente = (lead.valor_vendido || 0) - (lead.valor_arrecadado || 0);
+                    return sum + valorPendente;
+                }, 0);
+
+                let response = `⚠️ *PENDÊNCIAS FINANCEIRAS*\n\n`;
+                response += `💰 *Total em Aberto: R$ ${totalPendente.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}*\n`;
+                response += `📊 Total de ${pendencias.length} pendência(s)\n\n`;
+
+                response += `📋 *DETALHAMENTO:*\n\n`;
+
+                pendencias.forEach((lead, index) => {
+                    const valorPendente = (lead.valor_vendido || 0) - (lead.valor_arrecadado || 0);
+                    const valorVendido = lead.valor_vendido || 0;
+                    const valorArrecadado = lead.valor_arrecadado || 0;
+                    
+                    // Verificar se tem data de pagamento
+                    const dataPagamento = lead.data_pagamento ? new Date(lead.data_pagamento) : null;
+                    const dataVenda = new Date(lead.created_at);
+                    
+                    let statusIcon = '🟡';
+                    let statusText = 'Pendente';
+                    
+                    if (dataPagamento) {
+                        const hoje = new Date();
+                        const diasAtraso = Math.floor((hoje - dataPagamento) / (1000 * 60 * 60 * 24));
+                        if (diasAtraso > 30) {
+                            statusIcon = '🔴';
+                            statusText = `Vencido há ${diasAtraso} dias`;
+                        }
+                    }
+                    
+                    const cliente = lead.nome_completo || 'Cliente não identificado';
+                    const telefone = lead.telefone;
+                    
+                    response += `${index + 1}. ${statusIcon} R$ ${valorPendente.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n`;
+                    response += `   👤 ${cliente}\n`;
+                    if (telefone) {
+                        response += `   📱 ${telefone}\n`;
+                    }
+                    response += `   💰 Vendido: R$ ${valorVendido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} | Pago: R$ ${valorArrecadado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n`;
+                    response += `   📅 Venda: ${dataVenda.toLocaleDateString('pt-BR')}\n`;
+                    if (dataPagamento) {
+                        response += `   📅 Vencimento: ${dataPagamento.toLocaleDateString('pt-BR')} (${statusText})\n`;
+                    }
+                    if (lead.pix_paid) {
+                        response += `   ✅ PIX registrado\n`;
+                    }
+                    response += '\n';
+                });
+
+                await session.sock.sendMessage(chatId, { text: response });
+                console.log(`✅ [${userId}] Pendências enviadas!`);
+            } catch (error) {
+                console.error(`❌ [${userId}] Erro ao processar pendências:`, error);
+                await session.sock.sendMessage(chatId, { 
+                    text: '❌ Erro ao buscar pendências. Tente novamente.' 
+                });
+            }
+        }
 
         // Manter ping/pong para testes
         else if (messageText.toLowerCase().includes('ping')) {
@@ -1827,6 +1993,48 @@ app.get('/', (req, res) => {
 // SISTEMA DE JOBS PARA NOTIFICAÇÕES
 // ========================================
 
+// Função para buscar follow-ups do dia
+async function getFollowUpsForToday() {
+    try {
+        const today = new Date();
+        const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
+
+        const { data: followUps, error } = await supabase
+            .from('follow_ups')
+            .select(`
+                id,
+                titulo,
+                data_agendada,
+                prioridade,
+                tipo,
+                leads (
+                    nome_completo,
+                    empresa,
+                    telefone
+                ),
+                organizations (
+                    id,
+                    name,
+                    admin_phone
+                )
+            `)
+            .gte('data_agendada', todayStart.toISOString())
+            .lte('data_agendada', todayEnd.toISOString())
+            .order('data_agendada');
+
+        if (error) {
+            console.error('❌ Erro ao buscar follow-ups do dia:', error);
+            return [];
+        }
+
+        return followUps || [];
+    } catch (error) {
+        console.error('❌ Erro na consulta de follow-ups:', error);
+        return [];
+    }
+}
+
 // Função para buscar eventos do dia no Supabase
 async function getEventsForToday() {
     try {
@@ -2155,6 +2363,97 @@ async function getUserOrganization(phoneNumber) {
     }
 }
 
+// Função para buscar faturamento de uma organização (usando tabela leads)
+async function getFaturamentoForOrganization(organizationId) {
+    try {
+        console.log('💰 Buscando faturamento para organização ID:', organizationId);
+
+        // Buscar leads com vendas do mês atual
+        const now = new Date();
+        const firstDayMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const lastDayMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+        const { data: leads, error } = await supabase
+            .from('leads')
+            .select(`
+                id,
+                nome_completo,
+                telefone,
+                valor_vendido,
+                valor_arrecadado,
+                data_fechamento,
+                pix_paid,
+                observacoes
+            `)
+            .eq('organization_id', organizationId)
+            .not('valor_vendido', 'is', null)
+            .gte('data_fechamento', firstDayMonth.toISOString())
+            .lte('data_fechamento', lastDayMonth.toISOString())
+            .order('data_fechamento', { ascending: false });
+
+        console.log('💰 DEBUG - Query leads vendidos:', { error, count: leads?.length || 0 });
+        if (error) {
+            console.error('❌ ERRO DETALHADO leads:', JSON.stringify(error, null, 2));
+            return { total: 0, arrecadado: 0, pendente: 0, items: [] };
+        }
+
+        const items = leads || [];
+        const total = items.reduce((sum, item) => sum + (item.valor_vendido || 0), 0);
+        const arrecadado = items.reduce((sum, item) => sum + (item.valor_arrecadado || 0), 0);
+        const pendente = total - arrecadado;
+
+        console.log(`💰 Faturamento encontrado: R$ ${total.toLocaleString('pt-BR')} (${items.length} vendas)`);
+
+        return { total, arrecadado, pendente, items };
+    } catch (error) {
+        console.error('❌ Erro na consulta de faturamento:', error);
+        return { total: 0, arrecadado: 0, pendente: 0, items: [] };
+    }
+}
+
+// Função para buscar pendências de uma organização
+async function getPendenciasForOrganization(organizationId) {
+    try {
+        console.log('⚠️ Buscando pendências para organização ID:', organizationId);
+
+        // Buscar leads com valores pendentes (valor_vendido - valor_arrecadado > 0)
+        const { data: pendencias, error } = await supabase
+            .from('leads')
+            .select(`
+                id,
+                nome_completo,
+                telefone,
+                valor_vendido,
+                valor_arrecadado,
+                created_at,
+                data_pagamento,
+                pix_paid
+            `)
+            .eq('organization_id', organizationId)
+            .gt('valor_vendido', 0)
+            .order('created_at', { ascending: false });
+
+        console.log('⚠️ DEBUG - Query pendências:', { error, count: pendencias?.length || 0 });
+        if (error) {
+            console.error('❌ ERRO DETALHADO pendências:', JSON.stringify(error, null, 2));
+            return [];
+        }
+
+        // Filtrar apenas leads que ainda têm pendências (valor não totalmente pago)
+        const pendenciasReais = pendencias?.filter(lead => {
+            const valorPendente = (lead.valor_vendido || 0) - (lead.valor_arrecadado || 0);
+            return valorPendente > 0;
+        }) || [];
+
+        console.log(`⚠️ Pendências encontradas: ${pendenciasReais.length}`);
+
+        return pendenciasReais;
+    } catch (error) {
+        console.error('❌ Erro na consulta de pendências:', error);
+        return [];
+    }
+}
+
 // Função para buscar eventos de uma organização
 async function getEventsForOrganization(organizationId) {
     try {
@@ -2446,7 +2745,11 @@ async function checkAndSendNotifications(isDailySummary = false) {
                 return eventTime >= todayStartUTC && eventTime < todayEndUTC;
             });
 
-            if (eventsToday.length > 0) {
+            // Buscar follow-ups do dia
+            const followUpsToday = await getFollowUpsForToday();
+            console.log(`📅 Follow-ups encontrados para hoje: ${followUpsToday.length}`);
+
+            if (eventsToday.length > 0 || followUpsToday.length > 0) {
                 const today = new Date();
                 const weekdays = ['DOMINGO', 'SEGUNDA-FEIRA', 'TERÇA-FEIRA', 'QUARTA-FEIRA', 'QUINTA-FEIRA', 'SEXTA-FEIRA', 'SÁBADO'];
                 const months = ['JANEIRO', 'FEVEREIRO', 'MARÇO', 'ABRIL', 'MAIO', 'JUNHO', 'JULHO', 'AGOSTO', 'SETEMBRO', 'OUTUBRO', 'NOVEMBRO', 'DEZEMBRO'];
@@ -2618,6 +2921,44 @@ async function checkAndSendNotifications(isDailySummary = false) {
                 if (followUps.length > 0) {
                     summaryMessage += `• Follow-ups: ${followUps.length}\n`;
                 }
+
+                // Adicionar follow-ups independentes do dia
+                if (followUpsToday.length > 0) {
+                    summaryMessage += '\n📞 LEMBRETES DE FOLLOW-UP HOJE:\n\n';
+                    
+                    followUpsToday.forEach((followUp, index) => {
+                        const followUpTime = new Date(followUp.data_agendada);
+                        const timeStr = followUpTime.toLocaleTimeString('pt-BR', {
+                            hour: '2-digit',
+                            minute: '2-digit'
+                        });
+                        
+                        const prioridadeEmoji = {
+                            'alta': '🔴',
+                            'media': '🟡', 
+                            'baixa': '🟢'
+                        };
+                        
+                        const tipoEmoji = {
+                            'call': '📞',
+                            'email': '📧',
+                            'whatsapp': '💬',
+                            'meeting': '🤝'
+                        };
+
+                        summaryMessage += `${index + 1}. ${prioridadeEmoji[followUp.prioridade] || '📝'} ${followUp.titulo}\n`;
+                        summaryMessage += `   ⏰ ${timeStr} - ${tipoEmoji[followUp.tipo] || '📝'}\n`;
+                        
+                        if (followUp.leads) {
+                            summaryMessage += `   👤 ${followUp.leads.nome_completo}\n`;
+                            if (followUp.leads.telefone) {
+                                summaryMessage += `   📱 ${followUp.leads.telefone}\n`;
+                            }
+                        }
+                        summaryMessage += '\n';
+                    });
+                }
+
                 summaryMessage += '\n🚀 Tenha um dia produtivo!';
 
                 const sent = await sendDailySummaryToAllOrganizations(summaryMessage);

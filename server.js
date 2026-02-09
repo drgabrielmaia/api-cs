@@ -309,6 +309,93 @@ async function handleAgendaCommand(phoneNumber) {
     }
 }
 
+// Função para buscar faturamento de uma organização
+async function getFaturamentoForOrganization(organizationId) {
+    try {
+        console.log('💰 Buscando faturamento para organização ID:', organizationId);
+
+        // Buscar faturamento do mês atual
+        const now = new Date();
+        const firstDayMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const lastDayMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+        const { data: faturamento, error } = await supabase
+            .from('faturamento')
+            .select(`
+                id,
+                valor,
+                data_faturamento,
+                status,
+                descricao,
+                leads (
+                    nome_completo,
+                    telefone
+                ),
+                mentorados (
+                    nome_completo,
+                    telefone
+                )
+            `)
+            .eq('organization_id', organizationId)
+            .gte('data_faturamento', firstDayMonth.toISOString())
+            .lte('data_faturamento', lastDayMonth.toISOString())
+            .order('data_faturamento', { ascending: false });
+
+        if (error) {
+            console.error('❌ Erro ao buscar faturamento:', error);
+            return { total: 0, arrecadado: 0, pendente: 0, items: [] };
+        }
+
+        const items = faturamento || [];
+        const total = items.reduce((sum, item) => sum + (item.valor || 0), 0);
+        const arrecadado = items.filter(item => item.status === 'pago').reduce((sum, item) => sum + (item.valor || 0), 0);
+        const pendente = total - arrecadado;
+
+        return { total, arrecadado, pendente, items };
+    } catch (error) {
+        console.error('❌ Erro na consulta de faturamento:', error);
+        return { total: 0, arrecadado: 0, pendente: 0, items: [] };
+    }
+}
+
+// Função para buscar pendências de uma organização
+async function getPendenciasForOrganization(organizationId) {
+    try {
+        console.log('⚠️ Buscando pendências para organização ID:', organizationId);
+
+        const { data: pendencias, error } = await supabase
+            .from('faturamento')
+            .select(`
+                id,
+                valor,
+                data_faturamento,
+                data_vencimento,
+                descricao,
+                leads (
+                    nome_completo,
+                    telefone
+                ),
+                mentorados (
+                    nome_completo,
+                    telefone
+                )
+            `)
+            .eq('organization_id', organizationId)
+            .eq('status', 'pendente')
+            .order('data_vencimento');
+
+        if (error) {
+            console.error('❌ Erro ao buscar pendências:', error);
+            return [];
+        }
+
+        return pendencias || [];
+    } catch (error) {
+        console.error('❌ Erro na consulta de pendências:', error);
+        return [];
+    }
+}
+
 // Função para buscar eventos da organização
 async function getEventsForOrganization(organizationId) {
     try {
@@ -530,6 +617,116 @@ function initializeClient() {
             } catch (error) {
                 console.error('❌ Erro ao processar agenda:', error);
                 await msg.reply('❌ Erro ao buscar agenda. Tente novamente.');
+            }
+        }
+
+        // Comando faturamento
+        if (!msg.fromMe && msg.body.toLowerCase().trim() === 'faturamento') {
+            try {
+                console.log('💰 Processando comando faturamento...');
+                
+                const organization = await getUserOrganization(msg.from);
+                if (!organization) {
+                    await msg.reply('❌ Você não faz parte de uma organização autorizada para usar este comando.');
+                    return;
+                }
+
+                const faturamento = await getFaturamentoForOrganization(organization.id);
+                const now = new Date();
+                const monthName = now.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+
+                let response = `💰 *FATURAMENTO DE ${monthName.toUpperCase()}*\n\n`;
+                response += `📊 *RESUMO FINANCEIRO:*\n`;
+                response += `• 💵 Total Faturado: R$ ${faturamento.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n`;
+                response += `• ✅ Arrecadado: R$ ${faturamento.arrecadado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n`;
+                response += `• ⏳ Pendente: R$ ${faturamento.pendente.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n\n`;
+
+                if (faturamento.items && faturamento.items.length > 0) {
+                    response += `📋 *DETALHAMENTO (${faturamento.items.length} itens):*\n\n`;
+                    
+                    faturamento.items.slice(0, 10).forEach((item, index) => {
+                        const data = new Date(item.data_faturamento).toLocaleDateString('pt-BR');
+                        const status = item.status === 'pago' ? '✅' : '⏳';
+                        const cliente = item.leads?.nome_completo || item.mentorados?.nome_completo || 'Cliente não identificado';
+                        
+                        response += `${index + 1}. ${status} R$ ${item.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n`;
+                        response += `   📅 ${data} - ${cliente}\n`;
+                        if (item.descricao) {
+                            response += `   📝 ${item.descricao}\n`;
+                        }
+                        response += '\n';
+                    });
+
+                    if (faturamento.items.length > 10) {
+                        response += `... e mais ${faturamento.items.length - 10} itens\n`;
+                    }
+                } else {
+                    response += '📝 Nenhum faturamento registrado este mês.';
+                }
+
+                await msg.reply(response);
+                console.log('✅ Faturamento enviado!');
+            } catch (error) {
+                console.error('❌ Erro ao processar faturamento:', error);
+                await msg.reply('❌ Erro ao buscar faturamento. Tente novamente.');
+            }
+        }
+
+        // Comando pendencias/pendencia
+        if (!msg.fromMe && ['pendencia', 'pendencias'].includes(msg.body.toLowerCase().trim())) {
+            try {
+                console.log('⚠️ Processando comando pendências...');
+                
+                const organization = await getUserOrganization(msg.from);
+                if (!organization) {
+                    await msg.reply('❌ Você não faz parte de uma organização autorizada para usar este comando.');
+                    return;
+                }
+
+                const pendencias = await getPendenciasForOrganization(organization.id);
+
+                if (!pendencias || pendencias.length === 0) {
+                    await msg.reply('✅ *PENDÊNCIAS FINANCEIRAS*\n\nNenhuma pendência encontrada! 🎉\nTodos os pagamentos estão em dia.');
+                    return;
+                }
+
+                const totalPendente = pendencias.reduce((sum, item) => sum + (item.valor || 0), 0);
+
+                let response = `⚠️ *PENDÊNCIAS FINANCEIRAS*\n\n`;
+                response += `💰 *Total em Aberto: R$ ${totalPendente.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}*\n`;
+                response += `📊 Total de ${pendencias.length} pendência(s)\n\n`;
+
+                response += `📋 *DETALHAMENTO:*\n\n`;
+
+                pendencias.forEach((pendencia, index) => {
+                    const dataVencimento = new Date(pendencia.data_vencimento);
+                    const hoje = new Date();
+                    const diasAtraso = Math.floor((hoje - dataVencimento) / (1000 * 60 * 60 * 24));
+                    const isVencida = diasAtraso > 0;
+                    
+                    const statusIcon = isVencida ? '🔴' : '🟡';
+                    const statusText = isVencida ? `(${diasAtraso} dias em atraso)` : '(no prazo)';
+                    
+                    const cliente = pendencia.leads?.nome_completo || pendencia.mentorados?.nome_completo || 'Cliente não identificado';
+                    const telefone = pendencia.leads?.telefone || pendencia.mentorados?.telefone;
+                    
+                    response += `${index + 1}. ${statusIcon} R$ ${pendencia.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n`;
+                    response += `   👤 ${cliente}\n`;
+                    if (telefone) {
+                        response += `   📱 ${telefone}\n`;
+                    }
+                    response += `   📅 Vencimento: ${dataVencimento.toLocaleDateString('pt-BR')} ${statusText}\n`;
+                    if (pendencia.descricao) {
+                        response += `   📝 ${pendencia.descricao}\n`;
+                    }
+                    response += '\n';
+                });
+
+                await msg.reply(response);
+                console.log('✅ Pendências enviadas!');
+            } catch (error) {
+                console.error('❌ Erro ao processar pendências:', error);
+                await msg.reply('❌ Erro ao buscar pendências. Tente novamente.');
             }
         }
 
