@@ -285,8 +285,9 @@ const sendWhatsAppMessageForOrganization = async (organizationId, phoneNumber, m
   }
 
   try {
-    // Garantir que o número tenha o formato correto
-    let formattedNumber = phoneNumber.replace(/\D/g, '');
+    // Resolver @lid para número real primeiro
+    const cleanedNumber = await cleanPhoneNumber(phoneNumber, null, session);
+    let formattedNumber = cleanedNumber.replace(/\D/g, '');
     if (!formattedNumber.endsWith('@s.whatsapp.net')) {
       formattedNumber += '@s.whatsapp.net';
     }
