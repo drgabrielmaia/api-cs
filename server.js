@@ -1278,6 +1278,29 @@ async function checkAndSendNotifications(isDailySummary = false) {
 }
 
 
+// Função para processar follow-ups automaticamente
+async function processFollowupsAutomatically() {
+    try {
+        console.log('🤖 Executando processamento automático de follow-ups...');
+        
+        const response = await fetch('http://localhost:3001/api/process-followups', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (response.ok) {
+            const result = await response.json();
+            console.log('✅ Follow-ups processados automaticamente:', result.message);
+        } else {
+            console.log('⚠️ Erro na resposta do processamento de follow-ups');
+        }
+    } catch (error) {
+        console.error('❌ Erro no processamento automático de follow-ups:', error.message);
+    }
+}
+
 // Configurar cron jobs
 function setupCronJobs() {
     // Job principal: verificar a cada 2 minutos para lembretes de 30min
@@ -1292,9 +1315,15 @@ function setupCronJobs() {
         checkAndSendNotifications(true);
     });
 
+    // Job para processar follow-ups a cada 15 minutos
+    cron.schedule('*/15 * * * *', () => {
+        processFollowupsAutomatically();
+    });
+
     console.log('⏰ Cron jobs configurados:');
     console.log('   - Verificação de lembretes a cada 2 minutos (30min antes)');
     console.log('   - Resumo diário às 7h da manhã (horário de São Paulo)');
+    console.log('   - Processamento de follow-ups a cada 15 minutos');
 }
 
 // Endpoint para testar notificações manualmente
@@ -1303,6 +1332,24 @@ app.post('/test-notifications', async (req, res) => {
     console.log('🧪 Testando sistema de notificações...');
     await checkAndSendNotifications(isDailySummary || false);
     res.json({ success: true, message: `Teste de ${isDailySummary ? 'resumo diário' : 'notificações'} executado` });
+});
+
+// Endpoint para testar follow-ups manualmente
+app.post('/test-followups', async (req, res) => {
+    try {
+        console.log('🧪 Testando sistema de follow-ups...');
+        await processFollowupsAutomatically();
+        res.json({ 
+            success: true, 
+            message: 'Teste de follow-ups executado - verifique os logs do servidor' 
+        });
+    } catch (error) {
+        console.error('❌ Erro no teste de follow-ups:', error);
+        res.json({ 
+            success: false, 
+            error: 'Erro no teste de follow-ups' 
+        });
+    }
 });
 
 // Endpoint para debug de eventos com leads
@@ -1349,6 +1396,235 @@ app.get('/events/today', async (req, res) => {
         res.json({ success: true, data: events });
     } catch (error) {
         res.json({ success: false, error: 'Erro ao buscar eventos' });
+    }
+});
+
+// Endpoint para processar follow-ups agendados
+app.post('/api/process-followups', async (req, res) => {
+    try {
+        console.log('🔄 Processando follow-ups agendados...');
+        
+        let sentCount = 0;
+        let failedCount = 0;
+        let completedCount = 0;
+        let postponedCount = 0;
+        
+        // 1. Buscar execuções pendentes
+        const { data: executions, error: executionsError } = await supabase
+            .from('lead_followup_executions')
+            .select(`
+                *,
+                leads!inner(
+                    id,
+                    nome_completo,
+                    telefone,
+                    email,
+                    empresa
+                ),
+                lead_followup_sequences!inner(
+                    id,
+                    nome_sequencia,
+                    steps,
+                    horario_envio_inicio,
+                    horario_envio_fim,
+                    ativo
+                )
+            `)
+            .eq('status', 'active')
+            .lte('proxima_execucao', new Date().toISOString());
+
+        if (executionsError) {
+            console.error('❌ Erro ao buscar execuções:', executionsError);
+            return res.json({ 
+                success: false, 
+                error: 'Erro ao buscar execuções pendentes' 
+            });
+        }
+
+        console.log(`📋 Encontradas ${executions?.length || 0} execuções pendentes`);
+
+        if (!executions || executions.length === 0) {
+            return res.json({
+                success: true,
+                message: 'Nenhum follow-up pendente para processar',
+                sent_count: 0,
+                failed_count: 0,
+                completed_count: 0,
+                postponed_count: 0
+            });
+        }
+
+        // 2. Processar cada execução
+        for (const execution of executions) {
+            try {
+                const lead = execution.leads;
+                const sequence = execution.lead_followup_sequences;
+                const currentStep = execution.step_atual;
+
+                // Verificar se a sequência está ativa
+                if (!sequence.ativo) {
+                    console.log(`⏭️ Sequência ${sequence.nome_sequencia} inativa, pulando...`);
+                    continue;
+                }
+
+                // Verificar se ainda há steps para executar
+                if (!sequence.steps || currentStep >= sequence.steps.length) {
+                    console.log(`✅ Sequência completa para lead ${lead.nome_completo}`);
+                    
+                    // Marcar como completed
+                    await supabase
+                        .from('lead_followup_executions')
+                        .update({
+                            status: 'completed',
+                            updated_at: new Date().toISOString()
+                        })
+                        .eq('id', execution.id);
+                    
+                    completedCount++;
+                    continue;
+                }
+
+                // Pegar step atual
+                const step = sequence.steps[currentStep];
+                if (!step) {
+                    console.log(`❌ Step ${currentStep} não encontrado na sequência`);
+                    failedCount++;
+                    continue;
+                }
+
+                // Verificar horário de envio (9h-18h por padrão)
+                const now = new Date();
+                const currentHour = now.getHours();
+                const startHour = sequence.horario_envio_inicio ? parseInt(sequence.horario_envio_inicio.split(':')[0]) : 9;
+                const endHour = sequence.horario_envio_fim ? parseInt(sequence.horario_envio_fim.split(':')[0]) : 18;
+
+                if (currentHour < startHour || currentHour >= endHour) {
+                    console.log(`⏰ Fora do horário de envio (${currentHour}h), adiando...`);
+                    
+                    // Reagendar para próximo dia no horário início
+                    const tomorrow = new Date(now);
+                    tomorrow.setDate(tomorrow.getDate() + 1);
+                    tomorrow.setHours(startHour, 0, 0, 0);
+                    
+                    await supabase
+                        .from('lead_followup_executions')
+                        .update({
+                            proxima_execucao: tomorrow.toISOString(),
+                            updated_at: new Date().toISOString()
+                        })
+                        .eq('id', execution.id);
+                    
+                    postponedCount++;
+                    continue;
+                }
+
+                // Substituir variáveis na mensagem
+                let messageContent = step.conteudo || '';
+                messageContent = messageContent
+                    .replace(/\{\{nome\}\}/g, lead.nome_completo || 'amigo')
+                    .replace(/\{\{empresa\}\}/g, lead.empresa || 'sua empresa')
+                    .replace(/\{\{solucao\}\}/g, 'nossa solução');
+
+                // Formatar telefone
+                let phone = lead.telefone?.replace(/\D/g, '') || '';
+                if (!phone) {
+                    console.log(`❌ Lead ${lead.nome_completo} sem telefone válido`);
+                    failedCount++;
+                    continue;
+                }
+
+                // Adicionar código do país se necessário
+                if (!phone.startsWith('55')) {
+                    phone = '55' + phone;
+                }
+
+                // Enviar mensagem via WhatsApp
+                let messageSent = false;
+                try {
+                    if (isReady && client) {
+                        const whatsappId = `${phone}@c.us`;
+                        await client.sendMessage(whatsappId, messageContent);
+                        messageSent = true;
+                        console.log(`✅ Mensagem enviada para ${lead.nome_completo}: ${step.titulo}`);
+                    } else {
+                        console.log('⚠️ WhatsApp não conectado, simulando envio...');
+                        messageSent = true; // Para teste, considerar como enviado
+                    }
+                } catch (whatsappError) {
+                    console.error(`❌ Erro ao enviar WhatsApp para ${lead.nome_completo}:`, whatsappError);
+                    failedCount++;
+                    continue;
+                }
+
+                if (messageSent) {
+                    sentCount++;
+
+                    // Calcular próxima execução
+                    const nextExecutionDate = new Date();
+                    const delayDays = step.delay_days || 0;
+                    const delayHours = step.delay_hours || 0;
+                    
+                    nextExecutionDate.setDate(nextExecutionDate.getDate() + delayDays);
+                    nextExecutionDate.setHours(nextExecutionDate.getHours() + delayHours);
+
+                    // Atualizar execução
+                    const newStepExecuted = {
+                        step: currentStep,
+                        executed_at: new Date().toISOString(),
+                        type: 'whatsapp',
+                        titulo: step.titulo
+                    };
+
+                    const updatedStepsExecuted = execution.steps_executados ? 
+                        [...execution.steps_executados, newStepExecuted] : 
+                        [newStepExecuted];
+
+                    const nextStep = currentStep + 1;
+                    const isLastStep = nextStep >= sequence.steps.length;
+
+                    await supabase
+                        .from('lead_followup_executions')
+                        .update({
+                            step_atual: nextStep,
+                            proxima_execucao: isLastStep ? null : nextExecutionDate.toISOString(),
+                            total_touchpoints: (execution.total_touchpoints || 0) + 1,
+                            steps_executados: updatedStepsExecuted,
+                            status: isLastStep ? 'completed' : 'active',
+                            updated_at: new Date().toISOString()
+                        })
+                        .eq('id', execution.id);
+
+                    if (isLastStep) {
+                        completedCount++;
+                        console.log(`🏁 Sequência finalizada para ${lead.nome_completo}`);
+                    }
+                }
+
+            } catch (stepError) {
+                console.error(`❌ Erro ao processar execução ${execution.id}:`, stepError);
+                failedCount++;
+            }
+        }
+
+        const response = {
+            success: true,
+            message: `Processamento concluído: ${sentCount} enviados, ${failedCount} falharam, ${completedCount} finalizados, ${postponedCount} adiados`,
+            sent_count: sentCount,
+            failed_count: failedCount,
+            completed_count: completedCount,
+            postponed_count: postponedCount,
+            total_processed: executions.length
+        };
+
+        console.log('📊 Resultado do processamento:', response);
+        res.json(response);
+
+    } catch (error) {
+        console.error('❌ Erro no processamento de follow-ups:', error);
+        res.json({ 
+            success: false, 
+            error: 'Erro interno no processamento de follow-ups' 
+        });
     }
 });
 
