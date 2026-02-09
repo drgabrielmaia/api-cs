@@ -2313,10 +2313,10 @@ async function handleAgendaCommand(phoneNumber) {
         const events = await getEventsForOrganization(organization.id);
 
         if (!events || events.length === 0) {
-            return `📅 *Agenda do dia* (${new Date().toLocaleDateString('pt-BR')})\n\n✅ Nenhum compromisso agendado para hoje.`;
+            return `📅 *Programação do dia* (${new Date().toLocaleDateString('pt-BR')})\n\n✅ Nenhum compromisso agendado para hoje.`;
         }
 
-        let agendaMessage = `📅 *Agenda do dia* (${new Date().toLocaleDateString('pt-BR')})\n\n`;
+        let agendaMessage = `📅 *Programação do dia* (${new Date().toLocaleDateString('pt-BR')})\n\n`;
 
         events.forEach((event, index) => {
             const eventStart = new Date(event.start_datetime);

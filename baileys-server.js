@@ -34,6 +34,118 @@ const supabase = createClient(
     'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVkem1sbm56dHp6d3JwaGhpem9sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc0MjkwNzYsImV4cCI6MjA3MzAwNTA3Nn0.KjihWHrNYxDO5ZZKpa8UYPAhw9HIU11yvAvvsNaiPZU'
 );
 
+// Função para obter horário de São Paulo
+function getSaoPauloTime() {
+    return new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+}
+
+// Função para verificar organização do usuário por telefone
+async function getUserOrganization(phoneNumber) {
+    try {
+        // Remover caracteres especiais e código do país
+        let cleanPhone = phoneNumber.replace(/\D/g, '');
+
+        // Remover código do país (55)
+        if (cleanPhone.startsWith('55')) {
+            cleanPhone = cleanPhone.substring(2);
+        }
+
+        // Testar com e sem o 9
+        let numbersToTest = [];
+        if (cleanPhone.length === 10) {
+            // Número sem 9
+            numbersToTest = [
+                cleanPhone, // sem 9
+                cleanPhone.substring(0, 2) + '9' + cleanPhone.substring(2) // com 9
+            ];
+        } else if (cleanPhone.length === 11 && cleanPhone.charAt(2) === '9') {
+            // Número com 9
+            numbersToTest = [
+                cleanPhone, // com 9
+                cleanPhone.substring(0, 2) + cleanPhone.substring(3) // sem 9
+            ];
+        } else {
+            numbersToTest = [cleanPhone];
+        }
+
+        console.log(`🔍 Buscando organização para números: ${numbersToTest.join(', ')}`);
+
+        // Buscar na tabela organizations por owner_phone
+        for (const testPhone of numbersToTest) {
+            const { data: org, error } = await supabase
+                .from('organizations')
+                .select('*')
+                .eq('owner_phone', testPhone)
+                .single();
+
+            if (org && !error) {
+                console.log(`✅ Organização encontrada: ${org.name} para telefone ${testPhone}`);
+                return org;
+            }
+        }
+
+        console.log(`❌ Nenhuma organização encontrada para ${phoneNumber}`);
+        return null;
+    } catch (error) {
+        console.error('❌ Erro ao buscar organização:', error);
+        return null;
+    }
+}
+
+// Função para buscar eventos da organização
+async function getEventsForOrganization(organizationId) {
+    try {
+        // Usar timezone correto de São Paulo
+        const saoPauloTime = new Date(getSaoPauloTime());
+        const todayStart = new Date(saoPauloTime.getFullYear(), saoPauloTime.getMonth(), saoPauloTime.getDate());
+        const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
+
+        // Converter para UTC para consulta no banco
+        const todayStartUTC = new Date(todayStart.getTime() - saoPauloTime.getTimezoneOffset() * 60000);
+        const todayEndUTC = new Date(todayEnd.getTime() - saoPauloTime.getTimezoneOffset() * 60000);
+
+        const { data: events, error } = await supabase
+            .from('calendar_events')
+            .select(`
+                id,
+                title,
+                description,
+                start_datetime,
+                end_datetime,
+                mentorado_id,
+                lead_id,
+                organization_id,
+                mentorados (
+                    nome_completo,
+                    telefone,
+                    temperatura
+                ),
+                leads (
+                    nome_completo,
+                    telefone,
+                    temperatura,
+                    observacoes,
+                    status,
+                    origem
+                )
+            `)
+            .eq('organization_id', organizationId)
+            .gte('start_datetime', todayStartUTC.toISOString())
+            .lte('start_datetime', todayEndUTC.toISOString())
+            .order('start_datetime');
+
+        if (error) {
+            console.error('❌ Erro ao buscar eventos da organização:', error);
+            return [];
+        }
+
+        return events || [];
+    } catch (error) {
+        console.error('❌ Erro na consulta de eventos da organização:', error);
+        return [];
+    }
+}
+
 // Caminhos para persistência local
 const DATA_DIR = path.join(__dirname, 'auth_info_baileys');
 const CHATS_FILE = path.join(DATA_DIR, 'chats.json');
@@ -299,14 +411,14 @@ async function connectToWhatsApp() {
                 try {
                     console.log('📅 Pergunta sobre agenda detectada, enviando opções...');
 
-                    const responseMessage = `📅 *Informações da Agenda*
+                    const responseMessage = `📅 *Informações da Programação*
 
 Qual informação você gostaria de saber sobre as reuniões?
 
 🕐 *1* - Horários das reuniões
 👥 *2* - Participantes
 🔗 *3* - Links de acesso
-📋 *4* - Agenda completa do dia
+📋 *4* - Programação completa do dia
 📍 *5* - Locais das reuniões
 ⏰ *6* - Próxima reunião
 
@@ -322,33 +434,173 @@ _Digite o número da opção desejada ou digite sua pergunta específica._`;
             // Resposta para opções numeradas (1-6)
             else if (/^[1-6]$/.test(msgLower.trim())) {
                 try {
+                    // Buscar organização do usuário
+                    const phoneNumber = message.key.remoteJid;
+                    const organization = await getUserOrganization(phoneNumber);
+                    
+                    if (!organization) {
+                        await sock.sendMessage(message.key.remoteJid, { 
+                            text: '❌ Você não faz parte de uma organização autorizada para usar este comando.' 
+                        });
+                        return;
+                    }
+
+                    // Buscar eventos da organização
+                    const events = await getEventsForOrganization(organization.id);
                     let response = '';
 
-                    switch (msgLower.trim()) {
-                        case '1':
-                            response = '🕐 *Horários das Reuniões de Hoje:*\n\n• 09:00 - Reunião de Equipe\n• 14:30 - Call com Cliente\n• 16:00 - Revisão de Projeto';
-                            break;
-                        case '2':
-                            response = '👥 *Participantes das Reuniões:*\n\n• 09:00 - João, Maria, Pedro\n• 14:30 - Ana, Carlos\n• 16:00 - Toda a equipe';
-                            break;
-                        case '3':
-                            response = '🔗 *Links de Acesso:*\n\n• 09:00 - meet.google.com/abc-defg-hij\n• 14:30 - zoom.us/j/123456789\n• 16:00 - teams.microsoft.com/xyz';
-                            break;
-                        case '4':
-                            response = '📋 *Agenda Completa de Hoje:*\n\n🕘 **09:00-10:00** | Reunião de Equipe\n📍 Sala de Reuniões\n👥 João, Maria, Pedro\n\n🕜 **14:30-15:30** | Call com Cliente\n🔗 zoom.us/j/123456789\n👥 Ana, Carlos\n\n🕟 **16:00-17:00** | Revisão de Projeto\n📍 Sala Principal\n👥 Toda a equipe';
-                            break;
-                        case '5':
-                            response = '📍 *Locais das Reuniões:*\n\n• 09:00 - Sala de Reuniões (2º andar)\n• 14:30 - Online (Zoom)\n• 16:00 - Sala Principal (1º andar)';
-                            break;
-                        case '6':
-                            response = '⏰ *Próxima Reunião:*\n\n📅 **Hoje às 14:30**\n🎯 Call com Cliente\n👥 Ana, Carlos\n🔗 zoom.us/j/123456789\n⏳ Faltam 2 horas e 15 minutos';
-                            break;
+                    if (!events || events.length === 0) {
+                        response = '✅ Nenhum compromisso agendado para hoje.';
+                    } else {
+                        switch (msgLower.trim()) {
+                            case '1': // Horários
+                                response = '🕐 *Horários das Reuniões de Hoje:*\n\n';
+                                events.forEach(event => {
+                                    const eventStart = new Date(event.start_datetime);
+                                    const timeStr = eventStart.toLocaleTimeString('pt-BR', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        timeZone: 'America/Sao_Paulo'
+                                    });
+                                    response += `• ${timeStr} - ${event.title}\n`;
+                                });
+                                break;
+                            case '2': // Participantes
+                                response = '👥 *Participantes das Reuniões:*\n\n';
+                                events.forEach(event => {
+                                    const eventStart = new Date(event.start_datetime);
+                                    const timeStr = eventStart.toLocaleTimeString('pt-BR', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        timeZone: 'America/Sao_Paulo'
+                                    });
+                                    let participantName = 'Participante não identificado';
+                                    if (event.mentorados && event.mentorados.nome_completo) {
+                                        participantName = event.mentorados.nome_completo + ' (Mentorado)';
+                                    } else if (event.leads && event.leads.nome_completo) {
+                                        participantName = event.leads.nome_completo + ' (Lead)';
+                                    }
+                                    response += `• ${timeStr} - ${participantName}\n`;
+                                });
+                                break;
+                            case '3': // Links
+                                response = '🔗 *Links de Acesso:*\n\n';
+                                events.forEach(event => {
+                                    const eventStart = new Date(event.start_datetime);
+                                    const timeStr = eventStart.toLocaleTimeString('pt-BR', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        timeZone: 'America/Sao_Paulo'
+                                    });
+                                    const link = event.description && event.description.includes('http') ? 
+                                        event.description.match(/https?:\/\/[^\s]+/)?.[0] || 'Link não informado' : 
+                                        'Link não informado';
+                                    response += `• ${timeStr} - ${link}\n`;
+                                });
+                                break;
+                            case '4': // Programação completa
+                                response = '📋 *Programação Completa de Hoje:*\n\n';
+                                events.forEach(event => {
+                                    const eventStart = new Date(event.start_datetime);
+                                    const eventEnd = new Date(event.end_datetime);
+                                    const timeStartStr = eventStart.toLocaleTimeString('pt-BR', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        timeZone: 'America/Sao_Paulo'
+                                    });
+                                    const timeEndStr = eventEnd.toLocaleTimeString('pt-BR', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        timeZone: 'America/Sao_Paulo'
+                                    });
+                                    
+                                    let participantName = 'Participante não identificado';
+                                    if (event.mentorados && event.mentorados.nome_completo) {
+                                        participantName = event.mentorados.nome_completo + ' (Mentorado)';
+                                    } else if (event.leads && event.leads.nome_completo) {
+                                        participantName = event.leads.nome_completo + ' (Lead)';
+                                    }
+                                    
+                                    response += `🕐 **${timeStartStr}-${timeEndStr}** | ${event.title}\n`;
+                                    response += `👥 ${participantName}\n`;
+                                    if (event.description) {
+                                        response += `📝 ${event.description}\n`;
+                                    }
+                                    response += '\n';
+                                });
+                                break;
+                            case '5': // Locais
+                                response = '📍 *Locais das Reuniões:*\n\n';
+                                events.forEach(event => {
+                                    const eventStart = new Date(event.start_datetime);
+                                    const timeStr = eventStart.toLocaleTimeString('pt-BR', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        timeZone: 'America/Sao_Paulo'
+                                    });
+                                    const isOnline = event.description && (
+                                        event.description.includes('meet.') || 
+                                        event.description.includes('zoom') || 
+                                        event.description.includes('teams') ||
+                                        event.description.includes('http')
+                                    );
+                                    const location = isOnline ? 'Online' : 'Presencial';
+                                    response += `• ${timeStr} - ${location}\n`;
+                                });
+                                break;
+                            case '6': // Próxima reunião
+                                const nextEvent = events[0]; // Primeiro evento (já ordenado por horário)
+                                if (nextEvent) {
+                                    const eventStart = new Date(nextEvent.start_datetime);
+                                    const timeStr = eventStart.toLocaleTimeString('pt-BR', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        timeZone: 'America/Sao_Paulo'
+                                    });
+                                    
+                                    let participantName = 'Participante não identificado';
+                                    if (nextEvent.mentorados && nextEvent.mentorados.nome_completo) {
+                                        participantName = nextEvent.mentorados.nome_completo + ' (Mentorado)';
+                                    } else if (nextEvent.leads && nextEvent.leads.nome_completo) {
+                                        participantName = nextEvent.leads.nome_completo + ' (Lead)';
+                                    }
+                                    
+                                    const now = new Date();
+                                    const timeDiff = eventStart.getTime() - now.getTime();
+                                    const hoursUntil = Math.floor(timeDiff / (1000 * 60 * 60));
+                                    const minutesUntil = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
+                                    
+                                    response = `⏰ *Próxima Reunião:*\n\n📅 **Hoje às ${timeStr}**\n🎯 ${nextEvent.title}\n👥 ${participantName}`;
+                                    
+                                    if (timeDiff > 0) {
+                                        if (hoursUntil > 0) {
+                                            response += `\n⏳ Faltam ${hoursUntil}h e ${minutesUntil}min`;
+                                        } else if (minutesUntil > 0) {
+                                            response += `\n⏳ Faltam ${minutesUntil} minutos`;
+                                        } else {
+                                            response += `\n🔥 Começando agora!`;
+                                        }
+                                    } else {
+                                        response += `\n⚠️ Já em andamento`;
+                                    }
+                                    
+                                    if (nextEvent.description && nextEvent.description.includes('http')) {
+                                        const link = nextEvent.description.match(/https?:\/\/[^\s]+/)?.[0];
+                                        if (link) {
+                                            response += `\n🔗 ${link}`;
+                                        }
+                                    }
+                                } else {
+                                    response = '⏰ *Próxima Reunião:*\n\n✅ Nenhuma reunião agendada para hoje.';
+                                }
+                                break;
+                        }
                     }
 
                     await sock.sendMessage(message.key.remoteJid, { text: response });
                     console.log(`✅ Resposta da opção ${msgLower.trim()} enviada!`);
                 } catch (error) {
-                    console.error('❌ Erro ao enviar resposta da agenda:', error);
+                    console.error('❌ Erro ao enviar resposta da programação:', error);
                 }
             }
 
