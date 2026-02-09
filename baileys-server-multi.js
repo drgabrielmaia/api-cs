@@ -1032,11 +1032,7 @@ _Digite o número da opção desejada ou digite sua pergunta específica._`;
                 let response = `💰 *FATURAMENTO DE ${faturamento.mesAno}*\n\n`;
                 response += `📅 *Período:* ${faturamento.periodo}\n\n`;
                 
-                if (faturamento.isExample) {
-                    response += `⚠️ *Nenhuma venda no mês atual. Mostrando vendas recentes:*\n\n`;
-                }
-                
-                response += `📊 *RECEITA ${faturamento.isExample ? 'DAS VENDAS' : 'DO MÊS'}:*\n`;
+                response += `📊 *RECEITA DO MÊS:*\n`;
                 response += `💵 Total Faturado: R$ ${faturamento.totalFaturado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n`;
                 response += `📈 Total de ${faturamento.vendas.length} venda(s)\n\n`;
 
@@ -2382,8 +2378,8 @@ async function getFaturamentoForOrganization(organizationId) {
 
         console.log(`📅 Buscando vendas do período: ${firstDayOfMonth} até ${lastDayOfMonthStr}`);
 
-        // Primeiro tentar buscar vendas da organização específica
-        let { data: vendas, error } = await supabase
+        // Buscar vendas da organização específica no mês atual
+        const { data: vendas, error } = await supabase
             .from('leads')
             .select(`
                 id,
@@ -2397,67 +2393,6 @@ async function getFaturamentoForOrganization(organizationId) {
             .gte('data_venda', firstDayOfMonth)
             .lte('data_venda', lastDayOfMonthStr)
             .order('data_venda', { ascending: false });
-
-        // Se não encontrar vendas da organização no mês atual, buscar leads vendidos sem organização (dados legacy)
-        if (!error && (!vendas || vendas.length === 0)) {
-            console.log('📝 Nenhuma venda encontrada na organização no mês atual, buscando dados legacy...');
-            
-            const { data: vendasLegacy, error: errorLegacy } = await supabase
-                .from('leads')
-                .select(`
-                    id,
-                    nome_completo,
-                    valor_vendido,
-                    data_venda,
-                    status
-                `)
-                .is('organization_id', null)
-                .eq('status', 'vendido')
-                .gte('data_venda', firstDayOfMonth)
-                .lte('data_venda', lastDayOfMonthStr)
-                .order('data_venda', { ascending: false });
-            
-            if (!errorLegacy) {
-                vendas = vendasLegacy;
-                console.log(`📊 ${vendas?.length || 0} vendas legacy encontradas no mês atual`);
-            }
-            
-            // Se ainda não encontrar no mês atual, buscar as vendas mais recentes como exemplo
-            if (!vendas || vendas.length === 0) {
-                console.log('📝 Nenhuma venda no mês atual, buscando vendas recentes como exemplo...');
-                
-                const { data: vendasRecentes, error: errorRecentes } = await supabase
-                    .from('leads')
-                    .select(`
-                        id,
-                        nome_completo,
-                        valor_vendido,
-                        data_venda,
-                        status
-                    `)
-                    .is('organization_id', null)
-                    .eq('status', 'vendido')
-                    .not('data_venda', 'is', null)
-                    .order('data_venda', { ascending: false })
-                    .limit(5);
-                
-                if (!errorRecentes && vendasRecentes && vendasRecentes.length > 0) {
-                    vendas = vendasRecentes;
-                    console.log(`📊 ${vendas.length} vendas recentes encontradas como exemplo`);
-                    
-                    // Atualizar período para mostrar que são vendas de outros meses
-                    const primeiraVenda = new Date(vendasRecentes[0].data_venda);
-                    const ultimaVenda = new Date(vendasRecentes[vendasRecentes.length - 1].data_venda);
-                    return {
-                        totalFaturado: vendas.reduce((sum, venda) => sum + (venda.valor_vendido || 0), 0),
-                        vendas: vendas,
-                        periodo: `${ultimaVenda.toLocaleDateString('pt-BR')} até ${primeiraVenda.toLocaleDateString('pt-BR')}`,
-                        mesAno: 'Vendas Recentes (exemplo)',
-                        isExample: true
-                    };
-                }
-            }
-        }
 
         console.log('💰 DEBUG - Query vendas:', { error, count: vendas?.length || 0 });
         if (error) {
