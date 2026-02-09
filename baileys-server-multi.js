@@ -2220,13 +2220,11 @@ async function getEventsForOrganization(organizationId) {
                 organization_id,
                 mentorados (
                     nome_completo,
-                    telefone,
-                    temperatura
+                    telefone
                 ),
                 leads (
                     nome_completo,
-                    telefone,
-                    temperatura
+                    telefone
                 )
             `)
             .eq('organization_id', organizationId)
