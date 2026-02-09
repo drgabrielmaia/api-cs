@@ -927,7 +927,14 @@ Qual sua especialidade?`;
                     return;
                 }
 
+                console.log('🏢 Organização encontrada:', {
+                    id: organization.id,
+                    name: organization.name,
+                    admin_phone: organization.admin_phone
+                });
+
                 const events = await getEventsForOrganization(organization.id);
+                console.log('📅 Retorno dos eventos:', events?.length || 0, 'eventos');
                 let response = '';
 
                 if (!events || events.length === 0) {
@@ -2160,6 +2167,46 @@ async function getEventsForOrganization(organizationId) {
         const todayStartUTC = new Date(todayStart.getTime() - saoPauloTime.getTimezoneOffset() * 60000);
         const todayEndUTC = new Date(todayEnd.getTime() - saoPauloTime.getTimezoneOffset() * 60000);
 
+        console.log('📅 Buscando eventos para organização ID:', organizationId);
+        console.log('📅 Data inicio UTC:', todayStartUTC.toISOString());
+        console.log('📅 Data fim UTC:', todayEndUTC.toISOString());
+
+        // DEBUG: Buscar TODOS os eventos desta organização (sem filtro de data)
+        const { data: allEvents } = await supabase
+            .from('calendar_events')
+            .select('id, title, start_datetime, organization_id')
+            .eq('organization_id', organizationId);
+        
+        console.log('🔍 TODOS os eventos desta organização:', allEvents?.length || 0);
+        if (allEvents && allEvents.length > 0) {
+            allEvents.forEach(event => {
+                console.log(`📅 Evento: ${event.title} - ${event.start_datetime} (org: ${event.organization_id})`);
+            });
+        }
+
+        // DEBUG: Buscar org com admin_phone específico
+        const { data: debugOrg } = await supabase
+            .from('organizations')
+            .select('id, name, admin_phone')
+            .eq('admin_phone', '83921485650')
+            .single();
+        
+        if (debugOrg) {
+            console.log('🔍 Org com admin 83921485650:', debugOrg);
+            
+            const { data: debugEvents } = await supabase
+                .from('calendar_events')
+                .select('id, title, start_datetime, organization_id')
+                .eq('organization_id', debugOrg.id);
+            
+            console.log('🔍 Eventos da org 83921485650:', debugEvents?.length || 0);
+            if (debugEvents && debugEvents.length > 0) {
+                debugEvents.forEach(event => {
+                    console.log(`📅 Evento org 83921485650: ${event.title} - ${event.start_datetime}`);
+                });
+            }
+        }
+
         const { data: events, error } = await supabase
             .from('calendar_events')
             .select(`
@@ -2190,6 +2237,11 @@ async function getEventsForOrganization(organizationId) {
         if (error) {
             console.error('❌ Erro ao buscar eventos:', error);
             return [];
+        }
+
+        console.log('📅 Eventos encontrados:', events?.length || 0);
+        if (events && events.length > 0) {
+            console.log('📅 Primeiro evento:', events[0]);
         }
 
         return events || [];
