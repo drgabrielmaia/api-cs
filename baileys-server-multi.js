@@ -2122,27 +2122,21 @@ async function getUserOrganization(phoneNumber) {
         console.log('🔍 Sem código país:', cleanPhone);
         console.log('🔍 Testando números:', numbersToTest);
 
-        // Buscar admin da organização
+        // Buscar na tabela organizations por admin_phone
         for (const testNumber of numbersToTest) {
-            const { data: admin, error: adminError } = await supabase
-                .from('organization_users')
-                .select(`
-                    organization_id,
-                    role,
-                    organizations (
-                        id,
-                        name,
-                        admin_phone,
-                        whatsapp_instance_id
-                    )
-                `)
-                .eq('phone', testNumber)
-                .eq('role', 'admin')
+            const { data: org, error } = await supabase
+                .from('organizations')
+                .select('*')
+                .eq('admin_phone', testNumber)
                 .single();
 
-            if (admin && !adminError) {
-                console.log('✅ Admin encontrado:', admin);
-                return admin.organizations;
+            if (org && !error) {
+                console.log('✅ Organização encontrada:', org.name);
+                console.log('📞 Número testado que deu match:', testNumber);
+                console.log('📞 admin_phone no banco:', org.admin_phone);
+                return org;
+            } else {
+                console.log('❌ Não encontrado para:', testNumber);
             }
         }
 

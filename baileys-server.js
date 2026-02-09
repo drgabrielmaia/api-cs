@@ -89,8 +89,12 @@ async function getUserOrganization(phoneNumber) {
                 .single();
 
             if (org && !error) {
-                console.log(`✅ Organização encontrada: ${org.name} para telefone ${testPhone}`);
+                console.log('✅ Organização encontrada:', org.name);
+                console.log('📞 Número testado que deu match:', testPhone);
+                console.log('📞 admin_phone no banco:', org.admin_phone);
                 return org;
+            } else {
+                console.log('❌ Não encontrado para:', testPhone);
             }
         }
 
