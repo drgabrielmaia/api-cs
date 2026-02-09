@@ -10,12 +10,18 @@ const { createClient } = require('@supabase/supabase-js');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { settingsManager } = require('./organization-settings');
 
-// Função para limpar número de telefone de sufixos WhatsApp
+// Função para limpar número de telefone de sufixos WhatsApp e extrair de @lid
 function cleanPhoneNumber(phoneId) {
     if (!phoneId) return '';
+    
+    // Se é @lid, extrair o número real (ex: 89181254594721:98@lid -> 89181254594721)
+    if (phoneId.includes('@lid')) {
+        const match = phoneId.match(/(\d+):/);
+        return match ? match[1] : phoneId.replace('@lid', '');
+    }
+    
     return phoneId
         .replace('@s.whatsapp.net', '')
-        .replace('@lid', '')
         .replace('@g.us', '');
 }
 
@@ -545,9 +551,8 @@ async function connectUserToWhatsApp(userId) {
         const validMessages = messages.filter(msg => {
             // Ignorar mensagens sem conteúdo
             if (!msg.message) return false;
-            // Ignorar status broadcasts e IDs @lid
+            // Ignorar apenas status broadcasts
             if (msg.key.remoteJid === 'status@broadcast') return false;
-            if (msg.key.remoteJid && msg.key.remoteJid.includes('@lid')) return false;
             // Ignorar mensagens com problemas de descriptografia
             if (msg.messageStubType) return false;
             return true;
@@ -1204,7 +1209,7 @@ async function loadAllUserChats(session) {
 
             for (const [chatId, chatData] of chatEntries) {
                 if (chatId.includes('@s.whatsapp.net') || chatId.includes('@g.us')) {
-                    if (chatId === 'status@broadcast' || chatId.includes('@lid')) continue;
+                    if (chatId === 'status@broadcast') continue;
 
                     const lastMessage = session.messagesList.find(msg =>
                         msg.from === chatId || msg.to === chatId
@@ -1233,7 +1238,7 @@ async function loadAllUserChats(session) {
 
         session.messagesList.forEach(message => {
             const chatId = message.from;
-            if (!uniqueChats.has(chatId) && chatId !== 'status@broadcast' && !chatId.includes('@lid')) {
+            if (!uniqueChats.has(chatId) && chatId !== 'status@broadcast') {
                 const chat = {
                     id: chatId,
                     name: message.contact?.name || message.contact?.pushname || cleanPhoneNumber(chatId),
@@ -1275,7 +1280,7 @@ async function loadUserChatHistory(session, chatId, limit = 5) {
             if (store && store.messages && store.messages[chatId]) {
                 const storeMessages = Object.values(store.messages[chatId]);
                 storeMessages.forEach(msg => {
-                    if (msg.message && !msg.key.remoteJid?.includes('status@broadcast') && !msg.key.remoteJid?.includes('@lid')) {
+                    if (msg.message && !msg.key.remoteJid?.includes('status@broadcast')) {
                         const messageText = msg.message.conversation ||
                                           msg.message.extendedTextMessage?.text ||
                                           msg.message.imageMessage?.caption ||

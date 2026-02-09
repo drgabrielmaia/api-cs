@@ -39,12 +39,18 @@ function getSaoPauloTime() {
     return new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
 }
 
-// Função para limpar número de telefone de sufixos WhatsApp
+// Função para limpar número de telefone de sufixos WhatsApp e extrair de @lid
 function cleanPhoneNumber(phoneId) {
     if (!phoneId) return '';
+    
+    // Se é @lid, extrair o número real (ex: 89181254594721:98@lid -> 89181254594721)
+    if (phoneId.includes('@lid')) {
+        const match = phoneId.match(/(\d+):/);
+        return match ? match[1] : phoneId.replace('@lid', '');
+    }
+    
     return phoneId
         .replace('@s.whatsapp.net', '')
-        .replace('@lid', '')
         .replace('@g.us', '');
 }
 
@@ -302,9 +308,8 @@ async function connectToWhatsApp() {
 
         if (!message.message) return;
 
-        // Ignorar mensagens de status/stories e IDs do tipo @lid
+        // Ignorar apenas mensagens de status/stories
         if (message.key.remoteJid === 'status@broadcast') return;
-        if (message.key.remoteJid && message.key.remoteJid.includes('@lid')) return;
 
         const chatId = message.key.remoteJid;
         const isGroup = chatId.endsWith('@g.us');
