@@ -980,6 +980,18 @@ _Digite o número da opção desejada ou digite sua pergunta específica._`;
             }
         }
 
+        // Comando agenda
+        else if (messageText.toLowerCase().trim() === 'agenda') {
+            try {
+                console.log(`📅 [${userId}] Processando comando agenda...`);
+                const response = await handleAgendaCommand(chatId);
+                await session.sock.sendMessage(message.key.remoteJid, { text: response });
+                console.log(`✅ [${userId}] Agenda enviada!`);
+            } catch (error) {
+                console.error(`❌ [${userId}] Erro ao processar agenda:`, error);
+                await session.sock.sendMessage(message.key.remoteJid, { text: '❌ Erro ao buscar agenda. Tente novamente.' });
+            }
+        }
         // Manter ping/pong para testes
         else if (messageText.toLowerCase().includes('ping')) {
             try {
@@ -2062,6 +2074,173 @@ async function markEventMessageSent(eventId) {
 // Função para obter horário de São Paulo usando timezone correta
 function getSaoPauloTime() {
     return new Date().toLocaleString("en-US", {timeZone: "America/Sao_Paulo"});
+}
+
+// Função para verificar se usuário pertence a uma organização
+async function getUserOrganization(phoneNumber) {
+    try {
+        // Remover caracteres especiais e código do país
+        let cleanPhone = phoneNumber.replace(/\D/g, '');
+        // Remover código do país (55)
+        if (cleanPhone.startsWith('55')) {
+            cleanPhone = cleanPhone.substring(2);
+        }
+        
+        // Testar com e sem o 9
+        let numbersToTest = [];
+        if (cleanPhone.length === 10) {
+            // Número sem 9
+            numbersToTest = [
+                cleanPhone, // sem 9
+                cleanPhone.substring(0, 2) + '9' + cleanPhone.substring(2) // com 9
+            ];
+        } else if (cleanPhone.length === 11 && cleanPhone.charAt(2) === '9') {
+            // Número com 9
+            numbersToTest = [
+                cleanPhone, // com 9
+                cleanPhone.substring(0, 2) + cleanPhone.substring(3) // sem 9
+            ];
+        } else {
+            numbersToTest = [cleanPhone];
+        }
+
+        console.log('🔍 Testando números:', numbersToTest);
+
+        // Buscar admin da organização
+        for (const testNumber of numbersToTest) {
+            const { data: admin, error: adminError } = await supabase
+                .from('organization_users')
+                .select(`
+                    organization_id,
+                    role,
+                    organizations (
+                        id,
+                        name,
+                        admin_phone,
+                        whatsapp_instance_id
+                    )
+                `)
+                .eq('phone', testNumber)
+                .eq('role', 'admin')
+                .single();
+
+            if (admin && !adminError) {
+                console.log('✅ Admin encontrado:', admin);
+                return admin.organizations;
+            }
+        }
+
+        console.log('❌ Usuário não é admin de nenhuma organização');
+        return null;
+    } catch (error) {
+        console.error('❌ Erro ao buscar organização do usuário:', error);
+        return null;
+    }
+}
+
+// Função para buscar eventos de uma organização
+async function getEventsForOrganization(organizationId) {
+    try {
+        // Usar timezone correto de São Paulo
+        const saoPauloTime = new Date(getSaoPauloTime());
+        const todayStart = new Date(saoPauloTime.getFullYear(), saoPauloTime.getMonth(), saoPauloTime.getDate());
+        const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
+        
+        // Converter para UTC para consulta no banco
+        const todayStartUTC = new Date(todayStart.getTime() - saoPauloTime.getTimezoneOffset() * 60000);
+        const todayEndUTC = new Date(todayEnd.getTime() - saoPauloTime.getTimezoneOffset() * 60000);
+
+        const { data: events, error } = await supabase
+            .from('calendar_events')
+            .select(`
+                id,
+                title,
+                description,
+                start_datetime,
+                end_datetime,
+                mentorado_id,
+                lead_id,
+                organization_id,
+                mentorados (
+                    nome_completo,
+                    telefone,
+                    temperatura
+                ),
+                leads (
+                    nome_completo,
+                    telefone,
+                    temperatura
+                )
+            `)
+            .eq('organization_id', organizationId)
+            .gte('start_datetime', todayStartUTC.toISOString())
+            .lte('start_datetime', todayEndUTC.toISOString())
+            .order('start_datetime');
+
+        if (error) {
+            console.error('❌ Erro ao buscar eventos:', error);
+            return [];
+        }
+
+        return events || [];
+    } catch (error) {
+        console.error('❌ Erro na consulta de eventos:', error);
+        return [];
+    }
+}
+
+// Função para processar comando agenda
+async function handleAgendaCommand(phoneNumber) {
+    try {
+        // Verificar se o usuário pertence a uma organização
+        const organization = await getUserOrganization(phoneNumber);
+
+        if (!organization) {
+            return '❌ Você não faz parte de uma administração autorizada para usar este comando.';
+        }
+
+        console.log(`📋 Buscando agenda para organização: ${organization.name}`);
+
+        // Buscar eventos do dia para a organização
+        const events = await getEventsForOrganization(organization.id);
+
+        if (!events || events.length === 0) {
+            return `📅 *Agenda do dia* (${new Date().toLocaleDateString('pt-BR')})\n\n✅ Nenhum compromisso agendado para hoje.`;
+        }
+
+        let agendaMessage = `📅 *Agenda do dia* (${new Date().toLocaleDateString('pt-BR')})\n\n`;
+
+        events.forEach((event, index) => {
+            const eventStart = new Date(event.start_datetime);
+            const timeStr = eventStart.toLocaleTimeString('pt-BR', {
+                hour: '2-digit',
+                minute: '2-digit',
+                timeZone: 'America/Sao_Paulo'
+            });
+
+            let participantName = 'Participante não identificado';
+            if (event.mentorados && event.mentorados.nome_completo) {
+                participantName = event.mentorados.nome_completo + ' (Mentorado)';
+            } else if (event.leads && event.leads.nome_completo) {
+                participantName = event.leads.nome_completo + ' (Lead)';
+            }
+
+            agendaMessage += `${index + 1}. ${timeStr} - ${event.title}\n`;
+            agendaMessage += `   👤 ${participantName}\n\n`;
+        });
+
+        agendaMessage += '\n❓ *Você deseja ver informação de mais algum lead?*\n';
+        agendaMessage += '📝 Se sim, digite a numeração da reunião.';
+
+        // Armazenar temporariamente os eventos para consulta posterior
+        global.userAgendaData = global.userAgendaData || {};
+        global.userAgendaData[phoneNumber] = events;
+
+        return agendaMessage;
+    } catch (error) {
+        console.error('❌ Erro ao processar comando agenda:', error);
+        return '❌ Erro ao buscar agenda. Tente novamente em alguns instantes.';
+    }
 }
 
 // Função para normalizar telefone brasileiro
