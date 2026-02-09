@@ -1692,7 +1692,8 @@ app.get('/users/:userId/qr', (req, res) => {
 // User-specific send message
 app.post('/users/:userId/send', async (req, res) => {
     const { userId } = req.params;
-    const { to, message } = req.body;
+    const { to, phoneNumber, message } = req.body;
+    const targetNumber = to || phoneNumber;
     const session = getSession(userId);
 
     if (!session || !session.isReady || !session.sock) {
@@ -1703,7 +1704,9 @@ app.post('/users/:userId/send', async (req, res) => {
     }
 
     try {
-        let jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
+        // Resolver @lid primeiro se necessário
+        const cleanedNumber = await cleanPhoneNumber(targetNumber, null, session);
+        let jid = cleanedNumber.includes('@') ? cleanedNumber : `${cleanedNumber}@s.whatsapp.net`;
 
         // Se message é um objeto (com botões), usar diretamente
         // Se é string, converter para objeto de texto
