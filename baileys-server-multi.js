@@ -913,17 +913,63 @@ Qual sua especialidade?`;
                 }
         }
 
-        // Lógica para responder perguntas sobre agenda/reuniões
-        const msgLower = messageText.toLowerCase();
+        // Comando agenda direto
+        if (messageText.toLowerCase().trim() === 'agenda') {
+            try {
+                console.log(`📅 [${userId}] Comando agenda detectado...`);
+                
+                const organization = await getUserOrganization(chatId);
+                
+                if (!organization) {
+                    await session.sock.sendMessage(chatId, { 
+                        text: '❌ Você não faz parte de uma organização autorizada para usar este comando.' 
+                    });
+                    return;
+                }
 
-        // Palavras-chave para agenda/reuniões
-        const agendaKeywords = ['agenda', 'reunião', 'reuniao', 'meeting', 'call', 'encontro', 'compromisso', 'horário', 'horario'];
-        const questionWords = ['quando', 'que horas', 'qual', 'onde', 'quem', 'como'];
+                const events = await getEventsForOrganization(organization.id);
+                let response = '';
 
-        const hasAgendaKeyword = agendaKeywords.some(keyword => msgLower.includes(keyword));
-        const hasQuestionWord = questionWords.some(word => msgLower.includes(word));
+                if (!events || events.length === 0) {
+                    response = `📅 *Programação do dia* (${new Date().toLocaleDateString('pt-BR')})\n\n✅ Nenhum compromisso agendado para hoje.`;
+                } else {
+                    response = `📅 *Programação do dia* (${new Date().toLocaleDateString('pt-BR')})\n\n`;
+                    
+                    events.forEach((event, index) => {
+                        const eventStart = new Date(event.start_datetime);
+                        const eventEnd = new Date(event.end_datetime);
+                        const timeStartStr = eventStart.toLocaleTimeString('pt-BR', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            timeZone: 'America/Sao_Paulo'
+                        });
+                        const timeEndStr = eventEnd.toLocaleTimeString('pt-BR', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            timeZone: 'America/Sao_Paulo'
+                        });
+                        
+                        let participantName = 'Participante não identificado';
+                        if (event.mentorados && event.mentorados.nome_completo) {
+                            participantName = event.mentorados.nome_completo + ' (Mentorado)';
+                        } else if (event.leads && event.leads.nome_completo) {
+                            participantName = event.leads.nome_completo + ' (Lead)';
+                        }
+                        
+                        response += `${index + 1}. ${timeStartStr}-${timeEndStr} - ${event.title}\n`;
+                        response += `   👤 ${participantName}\n\n`;
+                    });
+                }
 
-        if (hasAgendaKeyword || (hasQuestionWord && (msgLower.includes('hoje') || msgLower.includes('amanhã') || msgLower.includes('amanha')))) {
+                await session.sock.sendMessage(chatId, { text: response });
+                console.log(`✅ [${userId}] Programação do dia enviada!`);
+            } catch (error) {
+                console.error(`❌ [${userId}] Erro ao enviar programação:`, error);
+            }
+        }
+
+        // Remover lógica de keywords
+        else if (false) {
             try {
                 console.log(`📅 [${userId}] Pergunta sobre agenda detectada, enviando opções...`);
 

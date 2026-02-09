@@ -397,42 +397,66 @@ async function connectToWhatsApp() {
             console.log('Texto:', messageText);
             console.log('=============================');
 
-            // Lógica para responder perguntas sobre agenda/reuniões
-            const msgLower = messageText.toLowerCase();
-
-            // Palavras-chave para agenda/reuniões
-            const agendaKeywords = ['agenda', 'reunião', 'reuniao', 'meeting', 'call', 'encontro', 'compromisso', 'horário', 'horario'];
-            const questionWords = ['quando', 'que horas', 'qual', 'onde', 'quem', 'como'];
-
-            const hasAgendaKeyword = agendaKeywords.some(keyword => msgLower.includes(keyword));
-            const hasQuestionWord = questionWords.some(word => msgLower.includes(word));
-
-            if (hasAgendaKeyword || (hasQuestionWord && (msgLower.includes('hoje') || msgLower.includes('amanhã') || msgLower.includes('amanha')))) {
+            // Comando agenda direto
+            if (messageText.toLowerCase().trim() === 'agenda') {
                 try {
-                    console.log('📅 Pergunta sobre agenda detectada, enviando opções...');
+                    console.log('📅 Comando agenda detectado...');
+                    
+                    // Buscar organização do usuário
+                    const phoneNumber = message.key.remoteJid;
+                    const organization = await getUserOrganization(phoneNumber);
+                    
+                    if (!organization) {
+                        await sock.sendMessage(message.key.remoteJid, { 
+                            text: '❌ Você não faz parte de uma organização autorizada para usar este comando.' 
+                        });
+                        return;
+                    }
 
-                    const responseMessage = `📅 *Informações da Programação*
+                    // Buscar eventos da organização
+                    const events = await getEventsForOrganization(organization.id);
+                    let response = '';
 
-Qual informação você gostaria de saber sobre as reuniões?
+                    if (!events || events.length === 0) {
+                        response = `📅 *Programação do dia* (${new Date().toLocaleDateString('pt-BR')})\n\n✅ Nenhum compromisso agendado para hoje.`;
+                    } else {
+                        response = `📅 *Programação do dia* (${new Date().toLocaleDateString('pt-BR')})\n\n`;
+                        
+                        events.forEach((event, index) => {
+                            const eventStart = new Date(event.start_datetime);
+                            const eventEnd = new Date(event.end_datetime);
+                            const timeStartStr = eventStart.toLocaleTimeString('pt-BR', {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                timeZone: 'America/Sao_Paulo'
+                            });
+                            const timeEndStr = eventEnd.toLocaleTimeString('pt-BR', {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                timeZone: 'America/Sao_Paulo'
+                            });
+                            
+                            let participantName = 'Participante não identificado';
+                            if (event.mentorados && event.mentorados.nome_completo) {
+                                participantName = event.mentorados.nome_completo + ' (Mentorado)';
+                            } else if (event.leads && event.leads.nome_completo) {
+                                participantName = event.leads.nome_completo + ' (Lead)';
+                            }
+                            
+                            response += `${index + 1}. ${timeStartStr}-${timeEndStr} - ${event.title}\n`;
+                            response += `   👤 ${participantName}\n\n`;
+                        });
+                    }
 
-🕐 *1* - Horários das reuniões
-👥 *2* - Participantes
-🔗 *3* - Links de acesso
-📋 *4* - Programação completa do dia
-📍 *5* - Locais das reuniões
-⏰ *6* - Próxima reunião
-
-_Digite o número da opção desejada ou digite sua pergunta específica._`;
-
-                    await sock.sendMessage(message.key.remoteJid, { text: responseMessage });
-                    console.log('✅ Menu de agenda enviado!');
+                    await sock.sendMessage(message.key.remoteJid, { text: response });
+                    console.log('✅ Programação do dia enviada!');
                 } catch (error) {
-                    console.error('❌ Erro ao enviar menu de agenda:', error);
+                    console.error('❌ Erro ao enviar programação:', error);
                 }
             }
 
-            // Resposta para opções numeradas (1-6)
-            else if (/^[1-6]$/.test(msgLower.trim())) {
+            // Remover lógica das opções 1-6
+            else if (false && /^[1-6]$/.test(messageText.toLowerCase().trim())) {
                 try {
                     // Buscar organização do usuário
                     const phoneNumber = message.key.remoteJid;
