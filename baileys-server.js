@@ -39,6 +39,15 @@ function getSaoPauloTime() {
     return new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
 }
 
+// Função para limpar número de telefone de sufixos WhatsApp
+function cleanPhoneNumber(phoneId) {
+    if (!phoneId) return '';
+    return phoneId
+        .replace('@s.whatsapp.net', '')
+        .replace('@lid', '')
+        .replace('@g.us', '');
+}
+
 // Função para verificar organização do usuário por telefone
 async function getUserOrganization(phoneNumber) {
     try {
@@ -293,8 +302,9 @@ async function connectToWhatsApp() {
 
         if (!message.message) return;
 
-        // Ignorar mensagens de status/stories
+        // Ignorar mensagens de status/stories e IDs do tipo @lid
         if (message.key.remoteJid === 'status@broadcast') return;
+        if (message.key.remoteJid && message.key.remoteJid.includes('@lid')) return;
 
         const chatId = message.key.remoteJid;
         const isGroup = chatId.endsWith('@g.us');
@@ -326,7 +336,7 @@ async function connectToWhatsApp() {
                 id: chatId,
                 name: chatName,
                 pushname: message.pushName || '',
-                number: isGroup ? chatId : chatId.replace('@s.whatsapp.net', '')
+                number: isGroup ? chatId : cleanPhoneNumber(chatId)
             }
         };
 
@@ -347,9 +357,9 @@ async function connectToWhatsApp() {
             if (!existingContact) {
                 const newContact = {
                     id: chatId,
-                    name: message.pushName || chatId.replace('@s.whatsapp.net', ''),
+                    name: message.pushName || cleanPhoneNumber(chatId),
                     pushname: message.pushName || '',
-                    number: chatId.replace('@s.whatsapp.net', ''),
+                    number: cleanPhoneNumber(chatId),
                     isMyContact: true
                 };
                 contacts.push(newContact);
@@ -677,7 +687,7 @@ async function loadAllChats() {
 
                     const chat = {
                         id: chatId,
-                        name: chatData.name || chatId.replace('@s.whatsapp.net', '').replace('@g.us', ''),
+                        name: chatData.name || cleanPhoneNumber(chatId),
                         isGroup: chatId.includes('@g.us'),
                         lastMessage: lastMessage ? {
                             body: lastMessage.body,
@@ -705,7 +715,7 @@ async function loadAllChats() {
             if (!uniqueChats.has(chatId) && chatId !== 'status@broadcast') {
                 const chat = {
                     id: chatId,
-                    name: message.contact?.name || message.contact?.pushname || chatId.replace('@s.whatsapp.net', '').replace('@g.us', ''),
+                    name: message.contact?.name || message.contact?.pushname || cleanPhoneNumber(chatId),
                     isGroup: chatId.includes('@g.us'),
                     lastMessage: {
                         body: message.body,
@@ -744,7 +754,7 @@ async function loadContactsFromChats() {
                 id: chat.id,
                 name: chat.name,
                 pushname: chat.name,
-                number: chat.id.replace('@s.whatsapp.net', ''),
+                number: cleanPhoneNumber(chat.id),
                 isMyContact: true
             });
         }
@@ -791,7 +801,7 @@ async function loadChatHistory(chatId, limit = 5) {
                                 id: msg.key.remoteJid,
                                 name: msg.pushName || msg.key.remoteJid,
                                 pushname: msg.pushName || '',
-                                number: msg.key.remoteJid?.replace('@s.whatsapp.net', '') || ''
+                                number: cleanPhoneNumber(msg.key.remoteJid) || ''
                             }
                         };
 
@@ -834,9 +844,9 @@ async function loadContacts() {
                 if (id.includes('@s.whatsapp.net')) {
                     uniqueContacts.set(id, {
                         id: id,
-                        name: contact.name || contact.notify || id.replace('@s.whatsapp.net', ''),
+                        name: contact.name || contact.notify || cleanPhoneNumber(id),
                         pushname: contact.notify || '',
-                        number: id.replace('@s.whatsapp.net', ''),
+                        number: cleanPhoneNumber(id),
                         isMyContact: true
                     });
                 }
@@ -853,9 +863,9 @@ async function loadContacts() {
                     if (!uniqueContacts.has(id)) {
                         uniqueContacts.set(id, {
                             id: id,
-                            name: chat.name || id.replace('@s.whatsapp.net', ''),
+                            name: chat.name || cleanPhoneNumber(id),
                             pushname: chat.name || '',
-                            number: id.replace('@s.whatsapp.net', ''),
+                            number: cleanPhoneNumber(id),
                             isMyContact: true
                         });
                     }
@@ -874,9 +884,9 @@ async function loadContacts() {
                     if (contact.id && contact.id.includes('@s.whatsapp.net')) {
                         uniqueContacts.set(contact.id, {
                             id: contact.id,
-                            name: contact.name || contact.notify || contact.id.replace('@s.whatsapp.net', ''),
+                            name: contact.name || contact.notify || cleanPhoneNumber(contact.id),
                             pushname: contact.notify || contact.pushname || '',
-                            number: contact.id.replace('@s.whatsapp.net', ''),
+                            number: cleanPhoneNumber(contact.id),
                             isMyContact: true
                         });
                     }
@@ -893,9 +903,9 @@ async function loadContacts() {
             if (contactId && contactId.includes('@s.whatsapp.net') && !uniqueContacts.has(contactId)) {
                 uniqueContacts.set(contactId, {
                     id: contactId,
-                    name: message.contact?.name || message.contact?.pushname || contactId.replace('@s.whatsapp.net', ''),
+                    name: message.contact?.name || message.contact?.pushname || cleanPhoneNumber(contactId),
                     pushname: message.contact?.pushname || '',
-                    number: contactId.replace('@s.whatsapp.net', ''),
+                    number: cleanPhoneNumber(contactId),
                     isMyContact: true
                 });
             }

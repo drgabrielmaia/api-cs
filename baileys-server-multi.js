@@ -10,6 +10,15 @@ const { createClient } = require('@supabase/supabase-js');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { settingsManager } = require('./organization-settings');
 
+// Função para limpar número de telefone de sufixos WhatsApp
+function cleanPhoneNumber(phoneId) {
+    if (!phoneId) return '';
+    return phoneId
+        .replace('@s.whatsapp.net', '')
+        .replace('@lid', '')
+        .replace('@g.us', '');
+}
+
 const app = express();
 const port = process.env.PORT || 3001;
 
@@ -536,8 +545,9 @@ async function connectUserToWhatsApp(userId) {
         const validMessages = messages.filter(msg => {
             // Ignorar mensagens sem conteúdo
             if (!msg.message) return false;
-            // Ignorar status broadcasts
+            // Ignorar status broadcasts e IDs @lid
             if (msg.key.remoteJid === 'status@broadcast') return false;
+            if (msg.key.remoteJid && msg.key.remoteJid.includes('@lid')) return false;
             // Ignorar mensagens com problemas de descriptografia
             if (msg.messageStubType) return false;
             return true;
@@ -609,7 +619,7 @@ async function connectUserToWhatsApp(userId) {
                 id: chatId,
                 name: chatName,
                 pushname: message.pushName || '',
-                number: isGroup ? chatId : chatId.replace('@s.whatsapp.net', '')
+                number: isGroup ? chatId : cleanPhoneNumber(chatId)
             }
         };
 
@@ -629,9 +639,9 @@ async function connectUserToWhatsApp(userId) {
             if (!existingContact) {
                 const newContact = {
                     id: chatId,
-                    name: message.pushName || chatId.replace('@s.whatsapp.net', ''),
+                    name: message.pushName || cleanPhoneNumber(chatId),
                     pushname: message.pushName || '',
-                    number: chatId.replace('@s.whatsapp.net', ''),
+                    number: cleanPhoneNumber(chatId),
                     isMyContact: true
                 };
                 session.contacts.push(newContact);
@@ -679,7 +689,7 @@ async function connectUserToWhatsApp(userId) {
 
             // Gerar protocolo único para esta resposta
             const protocol = generateProtocol();
-            const participantName = message.pushName || chatId.replace('@s.whatsapp.net', '');
+            const participantName = message.pushName || cleanPhoneNumber(chatId);
 
             // Verificar diferentes tipos de botões
             if (buttonId && buttonId.startsWith('confirm_call_')) {
@@ -743,7 +753,7 @@ async function connectUserToWhatsApp(userId) {
 
         // Verificar se é mensagem de confirmação (limitado a 2 mensagens por pessoa)
         if (!message.key.fromMe && messageText && messageText.length > 0) {
-            const participantName = message.pushName || chatId.replace('@s.whatsapp.net', '');
+            const participantName = message.pushName || cleanPhoneNumber(chatId);
 
             // Verificar se esta pessoa está na lista de confirmações pendentes
             if (pendingConfirmations.has(chatId)) {
@@ -809,7 +819,7 @@ async function connectUserToWhatsApp(userId) {
 
         // SDR ANTIPLANTÃO - DESATIVADO
         if (false && !message.key.fromMe && messageText && messageText.length > 0 && !isGroup) {
-            const cleanPhone = chatId.replace('@s.whatsapp.net', '').replace('+', '');
+            const cleanPhone = cleanPhoneNumber(chatId).replace('+', '');
             console.log(`🔍 [${userId}] DEBUG SDR:`);
             console.log(`   - chatId original: ${chatId}`);
             console.log(`   - cleanPhone: "${cleanPhone}"`);
@@ -1194,7 +1204,7 @@ async function loadAllUserChats(session) {
 
             for (const [chatId, chatData] of chatEntries) {
                 if (chatId.includes('@s.whatsapp.net') || chatId.includes('@g.us')) {
-                    if (chatId === 'status@broadcast') continue;
+                    if (chatId === 'status@broadcast' || chatId.includes('@lid')) continue;
 
                     const lastMessage = session.messagesList.find(msg =>
                         msg.from === chatId || msg.to === chatId
@@ -1202,7 +1212,7 @@ async function loadAllUserChats(session) {
 
                     const chat = {
                         id: chatId,
-                        name: chatData.name || chatId.replace('@s.whatsapp.net', '').replace('@g.us', ''),
+                        name: chatData.name || cleanPhoneNumber(chatId),
                         isGroup: chatId.includes('@g.us'),
                         lastMessage: lastMessage ? {
                             body: lastMessage.body,
@@ -1223,10 +1233,10 @@ async function loadAllUserChats(session) {
 
         session.messagesList.forEach(message => {
             const chatId = message.from;
-            if (!uniqueChats.has(chatId) && chatId !== 'status@broadcast') {
+            if (!uniqueChats.has(chatId) && chatId !== 'status@broadcast' && !chatId.includes('@lid')) {
                 const chat = {
                     id: chatId,
-                    name: message.contact?.name || message.contact?.pushname || chatId.replace('@s.whatsapp.net', '').replace('@g.us', ''),
+                    name: message.contact?.name || message.contact?.pushname || cleanPhoneNumber(chatId),
                     isGroup: chatId.includes('@g.us'),
                     lastMessage: {
                         body: message.body,
@@ -1265,7 +1275,7 @@ async function loadUserChatHistory(session, chatId, limit = 5) {
             if (store && store.messages && store.messages[chatId]) {
                 const storeMessages = Object.values(store.messages[chatId]);
                 storeMessages.forEach(msg => {
-                    if (msg.message && !msg.key.remoteJid?.includes('status@broadcast')) {
+                    if (msg.message && !msg.key.remoteJid?.includes('status@broadcast') && !msg.key.remoteJid?.includes('@lid')) {
                         const messageText = msg.message.conversation ||
                                           msg.message.extendedTextMessage?.text ||
                                           msg.message.imageMessage?.caption ||
@@ -1283,7 +1293,7 @@ async function loadUserChatHistory(session, chatId, limit = 5) {
                                 id: msg.key.remoteJid,
                                 name: msg.pushName || msg.key.remoteJid,
                                 pushname: msg.pushName || '',
-                                number: msg.key.remoteJid?.replace('@s.whatsapp.net', '') || ''
+                                number: cleanPhoneNumber(msg.key.remoteJid) || ''
                             }
                         };
 
