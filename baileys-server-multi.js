@@ -927,14 +927,14 @@ Qual sua especialidade?`;
             try {
                 console.log(`📅 [${userId}] Pergunta sobre agenda detectada, enviando opções...`);
 
-                const responseMessage = `📅 *Informações da Agenda*
+                const responseMessage = `📅 *Informações dos Compromissos*
 
 Qual informação você gostaria de saber sobre as reuniões?
 
 🕐 *1* - Horários das reuniões
 👥 *2* - Participantes
 🔗 *3* - Links de acesso
-📋 *4* - Agenda completa do dia
+📋 *4* - Programação completa do dia
 📍 *5* - Locais das reuniões
 ⏰ *6* - Próxima reunião
 
@@ -947,51 +947,159 @@ _Digite o número da opção desejada ou digite sua pergunta específica._`;
             }
         }
 
-        // Resposta para opções numeradas (1-6)
+        // Resposta para opções numeradas (1-6) - agora com dados reais
         else if (/^[1-6]$/.test(msgLower.trim())) {
             try {
                 let response = '';
-
-                switch (msgLower.trim()) {
-                    case '1':
-                        response = '🕐 *Horários das Reuniões de Hoje:*\n\n• 09:00 - Reunião de Equipe\n• 14:30 - Call com Cliente\n• 16:00 - Revisão de Projeto';
-                        break;
-                    case '2':
-                        response = '👥 *Participantes das Reuniões:*\n\n• 09:00 - João, Maria, Pedro\n• 14:30 - Ana, Carlos\n• 16:00 - Toda a equipe';
-                        break;
-                    case '3':
-                        response = '🔗 *Links de Acesso:*\n\n• 09:00 - meet.google.com/abc-defg-hij\n• 14:30 - zoom.us/j/123456789\n• 16:00 - teams.microsoft.com/xyz';
-                        break;
-                    case '4':
-                        response = '📋 *Agenda Completa de Hoje:*\n\n🕘 **09:00-10:00** | Reunião de Equipe\n📍 Sala de Reuniões\n👥 João, Maria, Pedro\n\n🕜 **14:30-15:30** | Call com Cliente\n🔗 zoom.us/j/123456789\n👥 Ana, Carlos\n\n🕟 **16:00-17:00** | Revisão de Projeto\n📍 Sala Principal\n👥 Toda a equipe';
-                        break;
-                    case '5':
-                        response = '📍 *Locais das Reuniões:*\n\n• 09:00 - Sala de Reuniões (2º andar)\n• 14:30 - Online (Zoom)\n• 16:00 - Sala Principal (1º andar)';
-                        break;
-                    case '6':
-                        response = '⏰ *Próxima Reunião:*\n\n📅 **Hoje às 14:30**\n🎯 Call com Cliente\n👥 Ana, Carlos\n🔗 zoom.us/j/123456789\n⏳ Faltam 2 horas e 15 minutos';
-                        break;
+                const organization = await getUserOrganization(chatId);
+                
+                if (!organization) {
+                    response = '❌ Você não faz parte de uma administração autorizada para usar este comando.';
+                } else {
+                    const events = await getEventsForOrganization(organization.id);
+                    
+                    if (!events || events.length === 0) {
+                        response = `✅ Nenhum compromisso agendado para hoje (${new Date().toLocaleDateString('pt-BR')}).`;
+                    } else {
+                        switch (msgLower.trim()) {
+                            case '1':
+                                response = '🕐 *Horários das Reuniões de Hoje:*\n\n';
+                                events.forEach(event => {
+                                    const eventStart = new Date(event.start_datetime);
+                                    const timeStr = eventStart.toLocaleTimeString('pt-BR', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        timeZone: 'America/Sao_Paulo'
+                                    });
+                                    response += `• ${timeStr} - ${event.title}\n`;
+                                });
+                                break;
+                            case '2':
+                                response = '👥 *Participantes das Reuniões:*\n\n';
+                                events.forEach(event => {
+                                    const eventStart = new Date(event.start_datetime);
+                                    const timeStr = eventStart.toLocaleTimeString('pt-BR', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        timeZone: 'America/Sao_Paulo'
+                                    });
+                                    let participantName = 'Participante não identificado';
+                                    if (event.mentorados && event.mentorados.nome_completo) {
+                                        participantName = event.mentorados.nome_completo + ' (Mentorado)';
+                                    } else if (event.leads && event.leads.nome_completo) {
+                                        participantName = event.leads.nome_completo + ' (Lead)';
+                                    }
+                                    response += `• ${timeStr} - ${participantName}\n`;
+                                });
+                                break;
+                            case '3':
+                                response = '🔗 *Links de Acesso:*\n\n';
+                                events.forEach(event => {
+                                    const eventStart = new Date(event.start_datetime);
+                                    const timeStr = eventStart.toLocaleTimeString('pt-BR', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        timeZone: 'America/Sao_Paulo'
+                                    });
+                                    const link = event.description && event.description.includes('http') 
+                                        ? event.description.match(/(https?:\/\/[^\s]+)/)?.[0] || 'Link não encontrado'
+                                        : 'Link não disponível';
+                                    response += `• ${timeStr} - ${link}\n`;
+                                });
+                                break;
+                            case '4':
+                                response = '📋 *Compromissos Completos de Hoje:*\n\n';
+                                events.forEach(event => {
+                                    const eventStart = new Date(event.start_datetime);
+                                    const eventEnd = event.end_datetime ? new Date(event.end_datetime) : null;
+                                    const startTime = eventStart.toLocaleTimeString('pt-BR', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        timeZone: 'America/Sao_Paulo'
+                                    });
+                                    const endTime = eventEnd ? eventEnd.toLocaleTimeString('pt-BR', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        timeZone: 'America/Sao_Paulo'
+                                    }) : '';
+                                    
+                                    let participantName = 'Participante não identificado';
+                                    if (event.mentorados && event.mentorados.nome_completo) {
+                                        participantName = event.mentorados.nome_completo + ' (Mentorado)';
+                                    } else if (event.leads && event.leads.nome_completo) {
+                                        participantName = event.leads.nome_completo + ' (Lead)';
+                                    }
+                                    
+                                    response += `🕘 **${startTime}${endTime ? '-' + endTime : ''}** | ${event.title}\n`;
+                                    response += `👥 ${participantName}\n`;
+                                    if (event.description) {
+                                        response += `📝 ${event.description}\n`;
+                                    }
+                                    response += '\n';
+                                });
+                                break;
+                            case '5':
+                                response = '📍 *Locais das Reuniões:*\n\n';
+                                events.forEach(event => {
+                                    const eventStart = new Date(event.start_datetime);
+                                    const timeStr = eventStart.toLocaleTimeString('pt-BR', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        timeZone: 'America/Sao_Paulo'
+                                    });
+                                    const location = event.description && event.description.includes('http') 
+                                        ? 'Online' 
+                                        : event.description || 'Local não especificado';
+                                    response += `• ${timeStr} - ${location}\n`;
+                                });
+                                break;
+                            case '6':
+                                const now = new Date();
+                                const nextEvent = events.find(event => new Date(event.start_datetime) > now);
+                                
+                                if (nextEvent) {
+                                    const eventStart = new Date(nextEvent.start_datetime);
+                                    const timeStr = eventStart.toLocaleTimeString('pt-BR', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        timeZone: 'America/Sao_Paulo'
+                                    });
+                                    
+                                    let participantName = 'Participante não identificado';
+                                    if (nextEvent.mentorados && nextEvent.mentorados.nome_completo) {
+                                        participantName = nextEvent.mentorados.nome_completo + ' (Mentorado)';
+                                    } else if (nextEvent.leads && nextEvent.leads.nome_completo) {
+                                        participantName = nextEvent.leads.nome_completo + ' (Lead)';
+                                    }
+                                    
+                                    const timeDiff = eventStart.getTime() - now.getTime();
+                                    const hoursLeft = Math.floor(timeDiff / (1000 * 60 * 60));
+                                    const minutesLeft = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
+                                    
+                                    response = `⏰ *Próxima Reunião:*\n\n📅 **Hoje às ${timeStr}**\n🎯 ${nextEvent.title}\n👥 ${participantName}`;
+                                    if (nextEvent.description && nextEvent.description.includes('http')) {
+                                        const link = nextEvent.description.match(/(https?:\/\/[^\s]+)/)?.[0];
+                                        if (link) response += `\n🔗 ${link}`;
+                                    }
+                                    if (hoursLeft > 0 || minutesLeft > 0) {
+                                        response += `\n⏳ Faltam ${hoursLeft > 0 ? hoursLeft + 'h ' : ''}${minutesLeft}min`;
+                                    }
+                                } else {
+                                    response = '⏰ *Próxima Reunião:*\n\nNão há mais reuniões hoje.';
+                                }
+                                break;
+                        }
+                    }
                 }
 
                 await session.sock.sendMessage(message.key.remoteJid, { text: response });
                 console.log(`✅ [${userId}] Resposta da opção ${msgLower.trim()} enviada!`);
             } catch (error) {
-                console.error(`❌ [${userId}] Erro ao enviar resposta da agenda:`, error);
+                console.error(`❌ [${userId}] Erro ao enviar resposta:`, error);
+                await session.sock.sendMessage(message.key.remoteJid, { text: '❌ Erro ao buscar informações. Tente novamente.' });
             }
         }
 
-        // Comando agenda
-        else if (messageText.toLowerCase().trim() === 'agenda') {
-            try {
-                console.log(`📅 [${userId}] Processando comando agenda...`);
-                const response = await handleAgendaCommand(chatId);
-                await session.sock.sendMessage(message.key.remoteJid, { text: response });
-                console.log(`✅ [${userId}] Agenda enviada!`);
-            } catch (error) {
-                console.error(`❌ [${userId}] Erro ao processar agenda:`, error);
-                await session.sock.sendMessage(message.key.remoteJid, { text: '❌ Erro ao buscar agenda. Tente novamente.' });
-            }
-        }
         // Manter ping/pong para testes
         else if (messageText.toLowerCase().includes('ping')) {
             try {
