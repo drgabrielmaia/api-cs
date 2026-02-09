@@ -1028,36 +1028,31 @@ _Digite o número da opção desejada ou digite sua pergunta específica._`;
                 });
 
                 const faturamento = await getFaturamentoForOrganization(organization.id);
-                const now = new Date();
-                const monthName = now.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
 
-                let response = `💰 *FATURAMENTO DE ${monthName.toUpperCase()}*\n\n`;
-                response += `📊 *RESUMO FINANCEIRO:*\n`;
-                response += `• 💵 Total Faturado: R$ ${faturamento.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n`;
-                response += `• ✅ Arrecadado: R$ ${faturamento.arrecadado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n`;
-                response += `• ⏳ Pendente: R$ ${faturamento.pendente.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n\n`;
+                let response = `💰 *FATURAMENTO DE ${faturamento.mesAno}*\n\n`;
+                response += `📅 *Período:* ${faturamento.periodo}\n\n`;
+                response += `📊 *RECEITA DO MÊS:*\n`;
+                response += `💵 Total Faturado: R$ ${faturamento.totalFaturado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n`;
+                response += `📈 Total de ${faturamento.vendas.length} venda(s)\n\n`;
 
-                if (faturamento.items && faturamento.items.length > 0) {
-                    response += `📋 *DETALHAMENTO (${faturamento.items.length} itens):*\n\n`;
+                if (faturamento.vendas && faturamento.vendas.length > 0) {
+                    response += `📋 *DETALHAMENTO DAS VENDAS:*\n\n`;
                     
-                    faturamento.items.slice(0, 10).forEach((item, index) => {
-                        const data = new Date(item.data_faturamento).toLocaleDateString('pt-BR');
-                        const status = item.status === 'pago' ? '✅' : '⏳';
-                        const cliente = item.leads?.nome_completo || item.mentorados?.nome_completo || 'Cliente não identificado';
+                    faturamento.vendas.slice(0, 10).forEach((venda, index) => {
+                        const dataVenda = new Date(venda.data_venda).toLocaleDateString('pt-BR');
+                        const cliente = venda.nome_completo || 'Cliente não identificado';
+                        const valor = venda.valor_vendido || 0;
                         
-                        response += `${index + 1}. ${status} R$ ${item.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n`;
-                        response += `   📅 ${data} - ${cliente}\n`;
-                        if (item.descricao) {
-                            response += `   📝 ${item.descricao}\n`;
-                        }
-                        response += '\n';
+                        response += `${index + 1}. 💰 R$ ${valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n`;
+                        response += `   👤 ${cliente}\n`;
+                        response += `   📅 ${dataVenda}\n\n`;
                     });
 
-                    if (faturamento.items.length > 10) {
-                        response += `... e mais ${faturamento.items.length - 10} itens\n`;
+                    if (faturamento.vendas.length > 10) {
+                        response += `... e mais ${faturamento.vendas.length - 10} vendas\n`;
                     }
                 } else {
-                    response += '📝 Nenhum faturamento registrado este mês.';
+                    response += '📝 Nenhuma venda registrada este mês.';
                 }
 
                 await session.sock.sendMessage(chatId, { text: response });
@@ -1106,10 +1101,7 @@ _Digite o número da opção desejada ou digite sua pergunta específica._`;
                     return;
                 }
 
-                const totalPendente = pendencias.reduce((sum, lead) => {
-                    const valorPendente = (lead.valor_vendido || 0) - (lead.valor_arrecadado || 0);
-                    return sum + valorPendente;
-                }, 0);
+                const totalPendente = pendencias.reduce((sum, divida) => sum + (divida.valor || 0), 0);
 
                 let response = `⚠️ *PENDÊNCIAS FINANCEIRAS*\n\n`;
                 response += `💰 *Total em Aberto: R$ ${totalPendente.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}*\n`;
@@ -1117,43 +1109,48 @@ _Digite o número da opção desejada ou digite sua pergunta específica._`;
 
                 response += `📋 *DETALHAMENTO:*\n\n`;
 
-                pendencias.forEach((lead, index) => {
-                    const valorPendente = (lead.valor_vendido || 0) - (lead.valor_arrecadado || 0);
-                    const valorVendido = lead.valor_vendido || 0;
-                    const valorArrecadado = lead.valor_arrecadado || 0;
-                    
-                    // Verificar se tem data de pagamento
-                    const dataPagamento = lead.data_pagamento ? new Date(lead.data_pagamento) : null;
-                    const dataVenda = new Date(lead.created_at);
+                pendencias.forEach((divida, index) => {
+                    const valor = divida.valor || 0;
+                    const status = divida.status || 'pendente';
+                    const dataVencimento = divida.data_vencimento ? new Date(divida.data_vencimento) : null;
+                    const hoje = new Date();
                     
                     let statusIcon = '🟡';
                     let statusText = 'Pendente';
                     
-                    if (dataPagamento) {
-                        const hoje = new Date();
-                        const diasAtraso = Math.floor((hoje - dataPagamento) / (1000 * 60 * 60 * 24));
-                        if (diasAtraso > 30) {
+                    if (status === 'atrasado') {
+                        statusIcon = '🔴';
+                        statusText = 'Atrasado';
+                        
+                        if (dataVencimento) {
+                            const diasAtraso = Math.floor((hoje - dataVencimento) / (1000 * 60 * 60 * 24));
+                            statusText = `Atrasado há ${diasAtraso} dias`;
+                        }
+                    } else if (dataVencimento) {
+                        const diasParaVencer = Math.floor((dataVencimento - hoje) / (1000 * 60 * 60 * 24));
+                        if (diasParaVencer <= 7 && diasParaVencer > 0) {
+                            statusIcon = '🟠';
+                            statusText = `Vence em ${diasParaVencer} dias`;
+                        } else if (diasParaVencer <= 0) {
                             statusIcon = '🔴';
-                            statusText = `Vencido há ${diasAtraso} dias`;
+                            statusText = 'Vencido';
                         }
                     }
                     
-                    const cliente = lead.nome_completo || 'Cliente não identificado';
-                    const telefone = lead.telefone;
+                    const mentorado = divida.mentorado_nome || 'Mentorado não identificado';
                     
-                    response += `${index + 1}. ${statusIcon} R$ ${valorPendente.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n`;
-                    response += `   👤 ${cliente}\n`;
-                    if (telefone) {
-                        response += `   📱 ${telefone}\n`;
+                    response += `${index + 1}. ${statusIcon} R$ ${valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n`;
+                    response += `   👤 ${mentorado}\n`;
+                    response += `   📊 Status: ${statusText}\n`;
+                    
+                    if (dataVencimento) {
+                        response += `   📅 Vencimento: ${dataVencimento.toLocaleDateString('pt-BR')}\n`;
                     }
-                    response += `   💰 Vendido: R$ ${valorVendido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} | Pago: R$ ${valorArrecadado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n`;
-                    response += `   📅 Venda: ${dataVenda.toLocaleDateString('pt-BR')}\n`;
-                    if (dataPagamento) {
-                        response += `   📅 Vencimento: ${dataPagamento.toLocaleDateString('pt-BR')} (${statusText})\n`;
+                    
+                    if (divida.descricao) {
+                        response += `   📝 ${divida.descricao}\n`;
                     }
-                    if (lead.pix_paid) {
-                        response += `   ✅ PIX registrado\n`;
-                    }
+                    
                     response += '\n';
                 });
 
@@ -2368,46 +2365,52 @@ async function getFaturamentoForOrganization(organizationId) {
     try {
         console.log('💰 Buscando faturamento para organização ID:', organizationId);
 
-        // Buscar leads com vendas do mês atual
-        const now = new Date();
-        const firstDayMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const lastDayMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        // Usar timezone de São Paulo para calcular período do mês atual
+        const saoPauloTime = new Date(getSaoPauloTime());
+        const currentYear = saoPauloTime.getFullYear();
+        const currentMonth = saoPauloTime.getMonth() + 1; // getMonth() retorna 0-11
+        
+        // Primeiro e último dia do mês atual
+        const firstDayOfMonth = `${currentYear}-${currentMonth.toString().padStart(2, '0')}-01`;
+        const lastDayOfMonth = new Date(currentYear, currentMonth, 0).getDate();
+        const lastDayOfMonthStr = `${currentYear}-${currentMonth.toString().padStart(2, '0')}-${lastDayOfMonth.toString().padStart(2, '0')}`;
 
-        const { data: leads, error } = await supabase
+        console.log(`📅 Buscando vendas do período: ${firstDayOfMonth} até ${lastDayOfMonthStr}`);
+
+        const { data: vendas, error } = await supabase
             .from('leads')
             .select(`
                 id,
                 nome_completo,
-                telefone,
                 valor_vendido,
-                valor_arrecadado,
-                data_fechamento,
-                pix_paid,
-                observacoes
+                data_venda,
+                status
             `)
             .eq('organization_id', organizationId)
-            .not('valor_vendido', 'is', null)
-            .gte('data_fechamento', firstDayMonth.toISOString())
-            .lte('data_fechamento', lastDayMonth.toISOString())
-            .order('data_fechamento', { ascending: false });
+            .eq('status', 'vendido')
+            .gte('data_venda', firstDayOfMonth)
+            .lte('data_venda', lastDayOfMonthStr)
+            .order('data_venda', { ascending: false });
 
-        console.log('💰 DEBUG - Query leads vendidos:', { error, count: leads?.length || 0 });
+        console.log('💰 DEBUG - Query vendas:', { error, count: vendas?.length || 0 });
         if (error) {
-            console.error('❌ ERRO DETALHADO leads:', JSON.stringify(error, null, 2));
-            return { total: 0, arrecadado: 0, pendente: 0, items: [] };
+            console.error('❌ ERRO DETALHADO vendas:', JSON.stringify(error, null, 2));
+            return { totalFaturado: 0, vendas: [], periodo: `${firstDayOfMonth} até ${lastDayOfMonthStr}` };
         }
 
-        const items = leads || [];
-        const total = items.reduce((sum, item) => sum + (item.valor_vendido || 0), 0);
-        const arrecadado = items.reduce((sum, item) => sum + (item.valor_arrecadado || 0), 0);
-        const pendente = total - arrecadado;
+        const totalFaturado = vendas?.reduce((sum, venda) => sum + (venda.valor_vendido || 0), 0) || 0;
 
-        console.log(`💰 Faturamento encontrado: R$ ${total.toLocaleString('pt-BR')} (${items.length} vendas)`);
+        console.log(`💰 Faturamento do mês: R$ ${totalFaturado} (${vendas?.length || 0} vendas)`);
 
-        return { total, arrecadado, pendente, items };
+        return { 
+            totalFaturado, 
+            vendas: vendas || [], 
+            periodo: `${firstDayOfMonth} até ${lastDayOfMonthStr}`,
+            mesAno: `${currentMonth}/${currentYear}`
+        };
     } catch (error) {
         console.error('❌ Erro na consulta de faturamento:', error);
-        return { total: 0, arrecadado: 0, pendente: 0, items: [] };
+        return { totalFaturado: 0, vendas: [], periodo: 'Erro ao calcular período', mesAno: 'N/A' };
     }
 }
 
@@ -2416,22 +2419,25 @@ async function getPendenciasForOrganization(organizationId) {
     try {
         console.log('⚠️ Buscando pendências para organização ID:', organizationId);
 
-        // Buscar leads com valores pendentes (valor_vendido - valor_arrecadado > 0)
+        // Buscar dívidas pendentes ou atrasadas
+        // Como não há organization_id na tabela dividas, vamos buscar todas pendentes/atrasadas
+        // e filtrar pelos mentorados da organização
         const { data: pendencias, error } = await supabase
-            .from('leads')
+            .from('dividas')
             .select(`
                 id,
-                nome_completo,
-                telefone,
-                valor_vendido,
-                valor_arrecadado,
-                created_at,
+                valor,
+                status,
+                mentorado_id,
+                mentorado_nome,
+                data_vencimento,
                 data_pagamento,
-                pix_paid
+                observacoes,
+                mentorados!inner(organization_id)
             `)
-            .eq('organization_id', organizationId)
-            .gt('valor_vendido', 0)
-            .order('created_at', { ascending: false });
+            .eq('mentorados.organization_id', organizationId)
+            .in('status', ['pendente', 'atrasado'])
+            .order('data_vencimento', { ascending: true });
 
         console.log('⚠️ DEBUG - Query pendências:', { error, count: pendencias?.length || 0 });
         if (error) {
@@ -2439,15 +2445,9 @@ async function getPendenciasForOrganization(organizationId) {
             return [];
         }
 
-        // Filtrar apenas leads que ainda têm pendências (valor não totalmente pago)
-        const pendenciasReais = pendencias?.filter(lead => {
-            const valorPendente = (lead.valor_vendido || 0) - (lead.valor_arrecadado || 0);
-            return valorPendente > 0;
-        }) || [];
+        console.log(`⚠️ Pendências encontradas: ${pendencias?.length || 0}`);
 
-        console.log(`⚠️ Pendências encontradas: ${pendenciasReais.length}`);
-
-        return pendenciasReais;
+        return pendencias || [];
     } catch (error) {
         console.error('❌ Erro na consulta de pendências:', error);
         return [];
