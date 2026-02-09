@@ -151,9 +151,42 @@ async function extractRealPhoneNumber(contact, chatId, session = null) {
     return '';
 }
 
+// Mapeamento de números reais para @lid (para respostas automáticas)
+const phoneToLidMapping = {
+    '5583996910414': '98260429606914@lid',
+    '83996910414': '98260429606914@lid',
+    '996910414': '98260429606914@lid'
+};
+
+// Mapeamento de @lid para números reais (para envio manual)
+const lidToPhoneMapping = {
+    '98260429606914@lid': '5583996910414'
+};
+
+// Função para converter número real para @lid (para respostas automáticas)
+function convertPhoneToLid(phoneNumber) {
+    const cleanNum = phoneNumber.replace(/\D/g, '');
+    
+    // Testar todas as variações
+    for (const [key, lid] of Object.entries(phoneToLidMapping)) {
+        if (cleanNum.includes(key) || cleanNum.endsWith(key.slice(-9))) {
+            console.log(`🔄 Convertendo número para @lid: ${phoneNumber} → ${lid}`);
+            return lid;
+        }
+    }
+    
+    return phoneNumber; // Retorna original se não encontrar
+}
+
 // Função para limpar número de telefone de sufixos WhatsApp e extrair número real
 async function cleanPhoneNumber(phoneId, contact = null, session = null) {
     if (!phoneId) return '';
+    
+    // 🎯 MAPEAMENTO: Se é um @lid conhecido, usar número real
+    if (phoneId.includes('@lid') && lidToPhoneMapping[phoneId]) {
+        console.log(`📱 Usando mapeamento @lid → número real: ${phoneId} → ${lidToPhoneMapping[phoneId]}`);
+        return lidToPhoneMapping[phoneId];
+    }
     
     // Se é @lid, tentar extrair número real primeiro usando TODAS as soluções
     if (phoneId.includes('@lid')) {
@@ -2526,7 +2559,24 @@ async function getUserOrganization(phoneNumber) {
         console.log('🔍 Sem código país:', cleanPhone);
         console.log('🔍 Testando números:', numbersToTest);
 
-        // Buscar na tabela organizations por admin_phone
+        // 🎯 PRIMEIRO: Verificar se é um @lid conhecido
+        if (phoneNumber.includes('@lid') && lidToPhoneMapping[phoneNumber]) {
+            const realPhone = lidToPhoneMapping[phoneNumber];
+            console.log(`📱 @lid detectado! Buscando org pelo número real: ${phoneNumber} → ${realPhone}`);
+            
+            const { data: org, error } = await supabase
+                .from('organizations')
+                .select('*')
+                .eq('admin_phone', realPhone)
+                .single();
+
+            if (org && !error) {
+                console.log('✅ Organização encontrada via @lid mapping:', org.name);
+                return org;
+            }
+        }
+
+        // Buscar na tabela organizations por admin_phone (números normais)
         for (const testNumber of numbersToTest) {
             const { data: org, error } = await supabase
                 .from('organizations')
@@ -2541,6 +2591,16 @@ async function getUserOrganization(phoneNumber) {
                 return org;
             } else {
                 console.log('❌ Não encontrado para:', testNumber);
+            }
+        }
+
+        // 🔄 EXTRA: Verificar se algum dos números testados tem @lid associado
+        for (const testNumber of numbersToTest) {
+            const associatedLid = phoneToLidMapping[testNumber];
+            if (associatedLid) {
+                console.log(`🔍 Testando @lid associado: ${testNumber} → ${associatedLid}`);
+                // Se encontrar match com @lid, significa que reconhece ambos
+                console.log(`✅ Número ${testNumber} tem @lid associado: ${associatedLid}`);
             }
         }
 
