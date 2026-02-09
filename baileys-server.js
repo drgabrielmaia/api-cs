@@ -70,12 +70,12 @@ async function getUserOrganization(phoneNumber) {
 
         console.log(`🔍 Buscando organização para números: ${numbersToTest.join(', ')}`);
 
-        // Buscar na tabela organizations por owner_phone
+        // Buscar na tabela organizations por admin_phone
         for (const testPhone of numbersToTest) {
             const { data: org, error } = await supabase
                 .from('organizations')
                 .select('*')
-                .eq('owner_phone', testPhone)
+                .eq('admin_phone', testPhone)
                 .single();
 
             if (org && !error) {
