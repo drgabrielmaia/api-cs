@@ -42,30 +42,40 @@ function getSaoPauloTime() {
 // Função para verificar organização do usuário por telefone
 async function getUserOrganization(phoneNumber) {
     try {
-        // Remover caracteres especiais e código do país
-        let cleanPhone = phoneNumber.replace(/\D/g, '');
-
-        // Remover código do país (55)
+        // Remover caracteres especiais
+        let originalPhone = phoneNumber.replace(/\D/g, '');
+        let cleanPhone = originalPhone;
+        
+        // Remover código do país (55) se presente
         if (cleanPhone.startsWith('55')) {
             cleanPhone = cleanPhone.substring(2);
         }
-
-        // Testar com e sem o 9
+        
+        // Testar todas as variações possíveis
         let numbersToTest = [];
+        
         if (cleanPhone.length === 10) {
-            // Número sem 9
+            // Número sem 9 (ex: 8399999999)
             numbersToTest = [
-                cleanPhone, // sem 9
-                cleanPhone.substring(0, 2) + '9' + cleanPhone.substring(2) // com 9
+                cleanPhone, // 8399999999
+                cleanPhone.substring(0, 2) + '9' + cleanPhone.substring(2), // 83999999999
+                '55' + cleanPhone, // 558399999999
+                '55' + cleanPhone.substring(0, 2) + '9' + cleanPhone.substring(2) // 5583999999999
             ];
         } else if (cleanPhone.length === 11 && cleanPhone.charAt(2) === '9') {
-            // Número com 9
+            // Número com 9 (ex: 83999999999)
             numbersToTest = [
-                cleanPhone, // com 9
-                cleanPhone.substring(0, 2) + cleanPhone.substring(3) // sem 9
+                cleanPhone, // 83999999999
+                cleanPhone.substring(0, 2) + cleanPhone.substring(3), // 8399999999
+                '55' + cleanPhone, // 5583999999999
+                '55' + cleanPhone.substring(0, 2) + cleanPhone.substring(3) // 558399999999
             ];
         } else {
+            // Outros formatos
             numbersToTest = [cleanPhone];
+            if (!originalPhone.startsWith('55')) {
+                numbersToTest.push('55' + cleanPhone);
+            }
         }
 
         console.log(`🔍 Buscando organização para números: ${numbersToTest.join(', ')}`);
