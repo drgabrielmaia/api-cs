@@ -6,6 +6,7 @@ const { Boom } = require('@hapi/boom');
 const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
+const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { settingsManager } = require('./organization-settings');
@@ -217,6 +218,15 @@ app.use(cors({
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning']
 })); // CORS habilitado para localhost:3000
+
+// Middleware para capturar body raw (necessário para validação HMAC do Instagram)
+app.use('/instagram-webhook', express.raw({ 
+    type: 'application/json',
+    verify: (req, res, buffer) => {
+        req.rawBody = buffer;
+    }
+}));
+
 app.use(express.json());
 
 // Multi-user WhatsApp sessions storage
@@ -1558,6 +1568,144 @@ function removeSSEClient(userId, res) {
         if (clients.size === 0) {
             userSSEClients.delete(userId);
         }
+    }
+}
+
+// ================ INSTAGRAM WEBHOOK MIDDLEWARE ================
+
+/**
+ * Middleware de validação HMAC-SHA256 para webhooks do Instagram
+ * Valida a assinatura enviada pela Meta no cabeçalho X-Hub-Signature-256
+ */
+function validateInstagramSignature(req, res, next) {
+    try {
+        // Extrai a assinatura do cabeçalho
+        const signature = req.get('X-Hub-Signature-256');
+        
+        if (!signature) {
+            console.error('❌ Instagram webhook - Assinatura não encontrada');
+            return res.status(403).json({ error: 'Assinatura não encontrada' });
+        }
+
+        // Remove o prefixo "sha256="
+        const expectedHash = signature.split('sha256=')[1];
+        
+        if (!expectedHash) {
+            console.error('❌ Instagram webhook - Formato de assinatura inválido');
+            return res.status(403).json({ error: 'Formato de assinatura inválido' });
+        }
+
+        // Verifica se APP_SECRET está configurado
+        if (!process.env.INSTAGRAM_APP_SECRET) {
+            console.error('❌ Instagram webhook - INSTAGRAM_APP_SECRET não configurado');
+            return res.status(500).json({ error: 'Servidor não configurado corretamente' });
+        }
+
+        // Calcula o hash HMAC-SHA256
+        const calculatedHash = crypto
+            .createHmac('sha256', process.env.INSTAGRAM_APP_SECRET)
+            .update(req.rawBody)
+            .digest('hex');
+
+        // Comparação segura para prevenir timing attacks
+        const expectedBuffer = Buffer.from(expectedHash, 'hex');
+        const calculatedBuffer = Buffer.from(calculatedHash, 'hex');
+
+        if (expectedBuffer.length !== calculatedBuffer.length || 
+            !crypto.timingSafeEqual(expectedBuffer, calculatedBuffer)) {
+            console.error('❌ Instagram webhook - Assinatura inválida');
+            return res.status(403).json({ error: 'Assinatura inválida' });
+        }
+
+        console.log('✅ Instagram webhook - Assinatura validada com sucesso');
+        
+        // Converte buffer para JSON após validação
+        try {
+            req.body = JSON.parse(req.rawBody.toString());
+        } catch (parseError) {
+            console.error('❌ Instagram webhook - Erro ao fazer parse do JSON:', parseError);
+            return res.status(400).json({ error: 'JSON inválido' });
+        }
+
+        next();
+
+    } catch (error) {
+        console.error('❌ Instagram webhook - Erro na validação:', error);
+        return res.status(500).json({ error: 'Erro interno na validação' });
+    }
+}
+
+/**
+ * Processa mensagem do Instagram Direct Message
+ * 🔥 AQUI VOCÊ CONECTA COM O BANCO DE DADOS 🔥
+ */
+async function processInstagramMessage(messaging) {
+    try {
+        console.log('📨 Instagram DM recebido:', JSON.stringify(messaging, null, 2));
+
+        const senderId = messaging.sender?.id;
+        const recipientId = messaging.recipient?.id;
+        const timestamp = messaging.timestamp;
+        
+        if (messaging.message) {
+            const message = messaging.message;
+            const messageId = message.mid;
+            const messageText = message.text;
+            const attachments = message.attachments;
+
+            console.log('💬 Nova mensagem Instagram:', {
+                senderId,
+                recipientId,
+                messageId,
+                messageText,
+                attachments: attachments?.length || 0,
+                timestamp: new Date(timestamp)
+            });
+
+            // 🔥 CONECTAR COM SUPABASE AQUI 🔥
+            // Exemplo de como salvar no banco:
+            /*
+            if (supabase) {
+                const { data, error } = await supabase
+                    .from('instagram_messages')
+                    .insert({
+                        sender_id: senderId,
+                        recipient_id: recipientId,
+                        message_id: messageId,
+                        message_text: messageText,
+                        attachments: attachments || [],
+                        timestamp: new Date(timestamp),
+                        platform: 'instagram',
+                        processed_at: new Date()
+                    });
+                
+                if (error) {
+                    console.error('❌ Erro ao salvar mensagem Instagram:', error);
+                } else {
+                    console.log('✅ Mensagem Instagram salva no banco:', data);
+                }
+            }
+            */
+
+            // Log para implementação
+            addNotificationLog('info', 'Mensagem Instagram recebida', {
+                senderId,
+                messageText: messageText?.substring(0, 100) + (messageText?.length > 100 ? '...' : ''),
+                timestamp
+            });
+        }
+
+        // Processa outros eventos (read, delivery, etc.)
+        if (messaging.read) {
+            console.log('👀 Instagram - Mensagem lida:', messaging.read);
+        }
+
+        if (messaging.delivery) {
+            console.log('📬 Instagram - Mensagem entregue:', messaging.delivery);
+        }
+
+    } catch (error) {
+        console.error('❌ Erro ao processar mensagem Instagram:', error);
     }
 }
 
@@ -4772,12 +4920,93 @@ app.get('/lid-mappings', async (req, res) => {
     }
 });
 
+// ================ INSTAGRAM WEBHOOK ROUTES ================
+
+/**
+ * GET /instagram-webhook - Handshake inicial com a Meta
+ * Verificação do webhook para configurar no Meta Developers
+ */
+app.get('/instagram-webhook', (req, res) => {
+    try {
+        const mode = req.query['hub.mode'];
+        const token = req.query['hub.verify_token'];
+        const challenge = req.query['hub.challenge'];
+
+        console.log('📞 Instagram webhook handshake:', { mode, token, challenge });
+
+        if (mode === 'subscribe') {
+            if (token === process.env.INSTAGRAM_VERIFY_TOKEN) {
+                console.log('✅ Instagram webhook - Token de verificação correto');
+                return res.status(200).send(challenge);
+            } else {
+                console.error('❌ Instagram webhook - Token de verificação incorreto');
+                return res.status(403).json({ error: 'Token de verificação incorreto' });
+            }
+        }
+
+        console.error('❌ Instagram webhook - Modo inválido:', mode);
+        return res.status(400).json({ error: 'Modo inválido' });
+
+    } catch (error) {
+        console.error('❌ Instagram webhook handshake error:', error);
+        return res.status(500).json({ error: 'Erro interno no handshake' });
+    }
+});
+
+/**
+ * POST /instagram-webhook - Recebe webhooks do Instagram DM
+ * Aplica validação HMAC-SHA256 e processa as mensagens
+ */
+app.post('/instagram-webhook', validateInstagramSignature, async (req, res) => {
+    try {
+        // ⚡ Responde imediatamente para a Meta (evita timeout)
+        res.status(200).json({ status: 'received' });
+
+        console.log('📨 Instagram webhook recebido:', JSON.stringify(req.body, null, 2));
+
+        // Verifica estrutura do payload
+        if (!req.body.entry || !Array.isArray(req.body.entry)) {
+            console.error('❌ Instagram webhook - Payload inválido');
+            return;
+        }
+
+        // Processa cada entry
+        for (const entry of req.body.entry) {
+            console.log('🎯 Instagram - Processando entry:', entry.id);
+
+            if (entry.messaging && Array.isArray(entry.messaging)) {
+                // Processa mensagens de forma assíncrona
+                const promises = entry.messaging.map(messaging => 
+                    processInstagramMessage(messaging)
+                );
+                await Promise.allSettled(promises);
+            } else {
+                console.log('ℹ️  Instagram - Entry sem messaging:', entry);
+            }
+        }
+
+        console.log('✅ Instagram webhook processado com sucesso');
+        
+        // Log da atividade
+        addNotificationLog('success', 'Instagram webhook processado', {
+            entries: req.body.entry?.length || 0,
+            timestamp: new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+        });
+
+    } catch (error) {
+        console.error('❌ Instagram webhook - Erro crítico:', error);
+        // Não retorna erro para não causar reenvio desnecessário
+    }
+});
+
 app.listen(port, async () => {
     console.log(`🚀 WhatsApp Multi-User Baileys API rodando em https://api.medicosderesultado.com.br`);
     console.log(`👥 Sistema preparado para múltiplos usuários`);
     console.log(`📱 Acesse https://api.medicosderesultado.com.br para ver o status`);
     console.log(`🔧 Endpoints: /users/{userId}/register para registrar novos usuários`);
     console.log(`🎯 Resolver LID: POST /resolve-lid, GET /lid-mappings`);
+    console.log(`📸 Instagram webhook: GET/POST /instagram-webhook`);
+    console.log(`🔐 Variáveis necessárias: INSTAGRAM_APP_SECRET, INSTAGRAM_VERIFY_TOKEN`);
 
     // Configurar jobs após 10 segundos (dar tempo para sessões conectarem)
     setTimeout(() => {
