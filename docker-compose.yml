@@ -10,13 +10,11 @@ services:
     ports:
       - "3001:3001"
     env_file:
-      - .env
+      - ./.env
     environment:
       - NODE_ENV=production
       - PORT=3001
       - TZ=America/Sao_Paulo
-      - INSTAGRAM_APP_SECRET=${INSTAGRAM_APP_SECRET}
-      - INSTAGRAM_VERIFY_TOKEN=${INSTAGRAM_VERIFY_TOKEN}
     volumes:
       # Persist WhatsApp auth data between container restarts
       - ./auth_info_baileys:/app/auth_info_baileys:rw

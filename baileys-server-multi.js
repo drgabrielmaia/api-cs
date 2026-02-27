@@ -1596,14 +1596,14 @@ function validateInstagramSignature(req, res, next) {
         }
 
         // Verifica se APP_SECRET está configurado
-        if (!process.env.INSTAGRAM_APP_SECRET) {
-            console.error('❌ Instagram webhook - INSTAGRAM_APP_SECRET não configurado');
+        if (!process.env.APP_SECRET) {
+            console.error('❌ Instagram webhook - APP_SECRET não configurado');
             return res.status(500).json({ error: 'Servidor não configurado corretamente' });
         }
 
         // Calcula o hash HMAC-SHA256
         const calculatedHash = crypto
-            .createHmac('sha256', process.env.INSTAGRAM_APP_SECRET)
+            .createHmac('sha256', process.env.APP_SECRET)
             .update(req.rawBody)
             .digest('hex');
 
@@ -4966,7 +4966,7 @@ app.get('/instagram-webhook', (req, res) => {
         console.log('📞 Instagram webhook handshake:', { mode, token, challenge });
 
         if (mode === 'subscribe') {
-            if (token === process.env.INSTAGRAM_VERIFY_TOKEN) {
+            if (token === process.env.VERIFY_TOKEN) {
                 console.log('✅ Instagram webhook - Token de verificação correto');
                 return res.status(200).send(challenge);
             } else {
