@@ -2346,6 +2346,37 @@ app.get('/', (req, res) => {
                         <li>GET /users/{userId}/chats - Chats do usuário</li>
                     </ul>
 
+                    <div style="background: #e8f4fd; padding: 15px; margin: 10px 0; border-radius: 5px;">
+                        <h4>📸 Instagram Webhook:</h4>
+                        <ul>
+                            <li><strong>GET /instagram-webhook</strong> - Handshake Meta Developers</li>
+                            <li><strong>POST /instagram-webhook</strong> - Receber mensagens DM</li>
+                        </ul>
+                        <p><em>🔐 Requer: INSTAGRAM_APP_SECRET e INSTAGRAM_VERIFY_TOKEN</em></p>
+                    </div>
+
+                    <h4>🎯 Resolução de @lid:</h4>
+                    <ul>
+                        <li>POST /resolve-lid - Resolver número @lid para telefone real</li>
+                        <li>GET /lid-mappings - Ver mapeamentos @lid ↔ telefone</li>
+                    </ul>
+
+                    <h4>🛠️ Utilitários:</h4>
+                    <ul>
+                        <li>GET /health - Status de saúde da API</li>
+                        <li>GET /events - Eventos globais (SSE)</li>
+                        <li>DELETE /users/{userId}/reset - Resetar sessão do usuário</li>
+                    </ul>
+
+                    <div style="background: #f8d7da; padding: 15px; margin: 10px 0; border-radius: 5px;">
+                        <h4>⚠️ Rotas de Teste (Desenvolvimento):</h4>
+                        <ul>
+                            <li>POST /test-notifications - Testar notificações</li>
+                            <li>GET /events/today - Eventos do dia</li>
+                            <li>POST /test-daily-summary - Testar resumo diário</li>
+                        </ul>
+                    </div>
+
                     <div style="background: #fff3cd; padding: 15px; margin: 10px 0; border-radius: 5px;">
                         <h4>💡 Como Usar:</h4>
                         <p>1. <strong>POST /users/default/register</strong> para registrar</p>
