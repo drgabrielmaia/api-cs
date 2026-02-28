@@ -818,6 +818,47 @@ async function connectUserToWhatsApp(userId) {
             return;
         }
 
+        // ========================
+        // DETECÇÃO DE RESPOSTA DE LEAD (FOLLOW-UP)
+        // ========================
+        if (!message.key.fromMe && !isGroup) {
+            try {
+                const senderPhone = chatId.replace('@s.whatsapp.net', '').replace('@lid', '');
+                const last9 = senderPhone.slice(-9);
+
+                if (last9.length === 9) {
+                    const { data: matchedLeads } = await supabase
+                        .from('leads')
+                        .select('id')
+                        .or(`telefone.ilike.%${last9}`)
+                        .limit(10);
+
+                    if (matchedLeads && matchedLeads.length > 0) {
+                        const leadIds = matchedLeads.map(l => l.id);
+                        const { data: activeExecs } = await supabase
+                            .from('lead_followup_executions')
+                            .select('id')
+                            .eq('status', 'active')
+                            .in('lead_id', leadIds);
+
+                        if (activeExecs && activeExecs.length > 0) {
+                            const execIds = activeExecs.map(e => e.id);
+                            for (const execId of execIds) {
+                                await supabase.from('lead_followup_executions').update({
+                                    status: 'responded',
+                                    data_resposta: new Date().toISOString(),
+                                    updated_at: new Date().toISOString()
+                                }).eq('id', execId);
+                            }
+                            console.log(`💬 [FOLLOW-UP] Lead respondeu! ${execIds.length} execução(ões) marcada(s) como 'responded' (tel: ...${last9})`);
+                        }
+                    }
+                }
+            } catch (followupErr) {
+                console.error(`⚠️ [FOLLOW-UP] Erro na detecção de resposta:`, followupErr);
+            }
+        }
+
         let chatName = message.pushName || chatId;
         if (isGroup) {
             try {
@@ -828,10 +869,11 @@ async function connectUserToWhatsApp(userId) {
             }
         }
 
+        const cleanNumber = isGroup ? chatId : (chatId.includes('@') ? chatId.replace(/@.*$/, '') : chatId);
         const messageObj = {
             id: message.key.id,
-            from: message.key.fromMe ? session.sock.user.id : chatId,  // Quem enviou
-            to: message.key.fromMe ? chatId : session.sock.user.id,    // Para quem foi enviado
+            from: message.key.fromMe ? session.sock.user.id : chatId,
+            to: message.key.fromMe ? chatId : session.sock.user.id,
             body: messageText,
             type: 'text',
             timestamp: Date.now(),
@@ -840,7 +882,7 @@ async function connectUserToWhatsApp(userId) {
                 id: chatId,
                 name: chatName,
                 pushname: message.pushName || '',
-                number: isGroup ? chatId : cleanPhoneNumber(chatId)
+                number: cleanNumber
             }
         };
 
@@ -858,11 +900,12 @@ async function connectUserToWhatsApp(userId) {
         if (!message.key.fromMe && !isGroup) {
             const existingContact = session.contacts.find(c => c.id === chatId);
             if (!existingContact) {
+                const contactNumber = chatId.replace(/@.*$/, '');
                 const newContact = {
                     id: chatId,
-                    name: message.pushName || cleanPhoneNumber(chatId),
+                    name: message.pushName || contactNumber,
                     pushname: message.pushName || '',
-                    number: cleanPhoneNumber(chatId),
+                    number: contactNumber,
                     isMyContact: true
                 };
                 session.contacts.push(newContact);
@@ -1902,19 +1945,20 @@ app.post('/users/:userId/send', async (req, res) => {
 
         // Create message object for sent message
         const messageText = typeof message === 'string' ? message : (message.text || '[Mensagem com botões]');
+        const cleanJidNumber = jid.replace(/@.*$/, '');
         const messageObj = {
             id: sentMessage.key.id,
-            from: session.sock.user.id,  // Quem enviou (eu)
-            to: jid,                     // Para quem foi enviado
+            from: session.sock.user.id,
+            to: jid,
             body: messageText,
             type: 'text',
             timestamp: Date.now(),
             isFromMe: true,
             contact: {
                 id: jid,
-                name: jid.replace('@s.whatsapp.net', ''),
+                name: cleanJidNumber,
                 pushname: '',
-                number: jid.replace('@s.whatsapp.net', '')
+                number: cleanJidNumber
             }
         };
 
@@ -1969,6 +2013,86 @@ app.post('/users/:userId/send', async (req, res) => {
     } catch (error) {
         console.error(`❌ [${userId}] Erro ao enviar mensagem:`, error);
         res.json({ success: false, error: 'Erro ao enviar mensagem' });
+    }
+});
+
+// User-specific send image
+app.post('/users/:userId/send-image', async (req, res) => {
+    const { userId } = req.params;
+    const { to, phoneNumber, imageUrl, imageBase64, caption } = req.body;
+    const targetNumber = to || phoneNumber;
+    const session = getSession(userId);
+
+    if (!session || !session.isReady || !session.sock) {
+        return res.json({ success: false, error: 'WhatsApp não está conectado' });
+    }
+
+    try {
+        const cleanedNumber = await cleanPhoneNumber(targetNumber, null, session);
+        let jid = cleanedNumber.includes('@') ? cleanedNumber : `${cleanedNumber}@s.whatsapp.net`;
+
+        let imageBuffer;
+        let mimetype = 'image/jpeg';
+
+        if (imageBase64) {
+            // Base64 image
+            const matches = imageBase64.match(/^data:(.+);base64,(.+)$/);
+            if (matches) {
+                mimetype = matches[1];
+                imageBuffer = Buffer.from(matches[2], 'base64');
+            } else {
+                imageBuffer = Buffer.from(imageBase64, 'base64');
+            }
+        } else if (imageUrl) {
+            // URL image - download it
+            const imgRes = await fetch(imageUrl);
+            if (!imgRes.ok) throw new Error('Falha ao baixar imagem');
+            const contentType = imgRes.headers.get('content-type');
+            if (contentType) mimetype = contentType;
+            const arrayBuffer = await imgRes.arrayBuffer();
+            imageBuffer = Buffer.from(arrayBuffer);
+        } else {
+            return res.json({ success: false, error: 'imageUrl ou imageBase64 é obrigatório' });
+        }
+
+        const sentMessage = await session.sock.sendMessage(jid, {
+            image: imageBuffer,
+            mimetype,
+            caption: caption || ''
+        });
+
+        const cleanJidNumber = jid.replace(/@.*$/, '');
+        const messageObj = {
+            id: sentMessage.key.id,
+            from: session.sock.user.id,
+            to: jid,
+            body: caption || '[Imagem]',
+            type: 'image',
+            timestamp: Date.now(),
+            isFromMe: true,
+            contact: {
+                id: jid,
+                name: cleanJidNumber,
+                pushname: '',
+                number: cleanJidNumber
+            }
+        };
+
+        session.messagesList.unshift(messageObj);
+        if (session.messagesList.length > 100) session.messagesList.pop();
+
+        if (!session.chatMessages.has(jid)) session.chatMessages.set(jid, []);
+        const chatMsgs = session.chatMessages.get(jid);
+        chatMsgs.unshift(messageObj);
+        if (chatMsgs.length > 50) chatMsgs.pop();
+
+        sendEventToUserClients(userId, 'new_message', messageObj);
+        sendEventToUserClients(userId, 'chat_message_update', { chatId: jid, message: messageObj });
+
+        res.json({ success: true, message: 'Imagem enviada com sucesso' });
+    } catch (error) {
+        console.error(`❌ [${userId}] Erro ao enviar imagem:`, error);
+        res.json({ success: false, error: 'Erro ao enviar imagem' });
     }
 });
 
@@ -4869,6 +4993,271 @@ async function checkAndSendAutoMessages() {
 
 // Configurar cron job para verificar mensagens automáticas a cada minuto
 cron.schedule('* * * * *', checkAndSendAutoMessages);
+
+// ========================
+// FOLLOW-UP AUTOMÁTICO MULTI-ORG
+// ========================
+
+let isProcessingFollowups = false;
+
+async function processFollowupsForAllOrganizations() {
+    if (isProcessingFollowups) {
+        console.log('⏳ Follow-ups já estão sendo processados, pulando...');
+        return { processed: 0, skipped: true };
+    }
+    isProcessingFollowups = true;
+
+    let processed = 0;
+    let errors = 0;
+
+    try {
+        const now = new Date(getSaoPauloTime());
+        const currentHour = now.getHours();
+        const currentMinute = now.getMinutes();
+        const dayOfWeek = now.getDay(); // 0=domingo, 6=sábado
+
+        console.log(`\n🔄 [FOLLOW-UP] Processando follow-ups... ${now.toLocaleString('pt-BR')}`);
+
+        // Buscar execuções pendentes
+        const { data: executions, error: fetchError } = await supabase
+            .from('lead_followup_executions')
+            .select(`
+                *,
+                lead:leads(id, nome_completo, telefone, empresa, organization_id, email),
+                sequence:lead_followup_sequences(id, nome_sequencia, steps, horario_envio_inicio, horario_envio_fim, ativo, pausar_fim_semana, pausar_feriados, timezone)
+            `)
+            .eq('status', 'active')
+            .lte('proxima_execucao', now.toISOString());
+
+        if (fetchError) {
+            console.error('❌ [FOLLOW-UP] Erro ao buscar execuções:', fetchError);
+            return { processed: 0, errors: 1 };
+        }
+
+        if (!executions || executions.length === 0) {
+            console.log('✅ [FOLLOW-UP] Nenhum follow-up pendente.');
+            return { processed: 0, errors: 0 };
+        }
+
+        console.log(`📋 [FOLLOW-UP] ${executions.length} execuções pendentes encontradas.`);
+
+        for (const exec of executions) {
+            try {
+                const { lead, sequence } = exec;
+
+                // Validações
+                if (!lead || !sequence) {
+                    console.log(`⚠️ [FOLLOW-UP] Execução ${exec.id}: lead ou sequência não encontrados, pulando.`);
+                    continue;
+                }
+                if (!sequence.ativo) {
+                    console.log(`⏸️ [FOLLOW-UP] Sequência "${sequence.nome_sequencia}" desativada, pulando.`);
+                    continue;
+                }
+                if (!lead.telefone) {
+                    console.log(`⚠️ [FOLLOW-UP] Lead "${lead.nome_completo}" sem telefone, pulando.`);
+                    continue;
+                }
+
+                const orgId = lead.organization_id;
+                if (!orgId) {
+                    console.log(`⚠️ [FOLLOW-UP] Lead "${lead.nome_completo}" sem organization_id, pulando.`);
+                    continue;
+                }
+
+                // Verificar se tem sessão WhatsApp ativa pra essa org
+                const orgSession = userSessions.get(orgId);
+                if (!orgSession || !orgSession.sock || !orgSession.isReady) {
+                    console.log(`📵 [FOLLOW-UP] Org ${orgId} sem WhatsApp ativo, pulando.`);
+                    continue;
+                }
+
+                // Verificar fim de semana
+                if (sequence.pausar_fim_semana && (dayOfWeek === 0 || dayOfWeek === 6)) {
+                    // Reagendar para segunda-feira no horário de início
+                    const monday = new Date(now);
+                    const daysUntilMonday = dayOfWeek === 0 ? 1 : 2;
+                    monday.setDate(monday.getDate() + daysUntilMonday);
+                    const [startH, startM] = (sequence.horario_envio_inicio || '09:00').split(':').map(Number);
+                    monday.setHours(startH, startM, 0, 0);
+
+                    await supabase.from('lead_followup_executions').update({
+                        proxima_execucao: monday.toISOString(),
+                        updated_at: new Date().toISOString()
+                    }).eq('id', exec.id);
+
+                    console.log(`📅 [FOLLOW-UP] Fim de semana — reagendado para ${monday.toLocaleString('pt-BR')}`);
+                    continue;
+                }
+
+                // Verificar janela de horário
+                const [startH, startM] = (sequence.horario_envio_inicio || '09:00').split(':').map(Number);
+                const [endH, endM] = (sequence.horario_envio_fim || '18:00').split(':').map(Number);
+                const currentTimeMinutes = currentHour * 60 + currentMinute;
+                const startTimeMinutes = startH * 60 + startM;
+                const endTimeMinutes = endH * 60 + endM;
+
+                if (currentTimeMinutes < startTimeMinutes || currentTimeMinutes >= endTimeMinutes) {
+                    // Fora do horário — reagendar para amanhã no horário de início
+                    const tomorrow = new Date(now);
+                    tomorrow.setDate(tomorrow.getDate() + 1);
+                    tomorrow.setHours(startH, startM, 0, 0);
+
+                    await supabase.from('lead_followup_executions').update({
+                        proxima_execucao: tomorrow.toISOString(),
+                        updated_at: new Date().toISOString()
+                    }).eq('id', exec.id);
+
+                    console.log(`🕐 [FOLLOW-UP] Fora do horário (${currentHour}:${String(currentMinute).padStart(2,'0')}) — reagendado para amanhã ${startH}:${String(startM).padStart(2,'0')}`);
+                    continue;
+                }
+
+                // Pegar step atual
+                const steps = sequence.steps || [];
+                const stepIndex = exec.step_atual || 0;
+
+                if (stepIndex >= steps.length) {
+                    // Todos os steps já foram executados
+                    await supabase.from('lead_followup_executions').update({
+                        status: 'completed',
+                        updated_at: new Date().toISOString()
+                    }).eq('id', exec.id);
+                    console.log(`✅ [FOLLOW-UP] Sequência completada para lead "${lead.nome_completo}"`);
+                    continue;
+                }
+
+                const step = steps[stepIndex];
+
+                // Substituir variáveis no conteúdo
+                let messageContent = (step.conteudo || '').replace(/\{\{nome\}\}/gi, lead.nome_completo || '')
+                    .replace(/\{\{empresa\}\}/gi, lead.empresa || '')
+                    .replace(/\{\{email\}\}/gi, lead.email || '')
+                    .replace(/\{\{telefone\}\}/gi, lead.telefone || '');
+
+                // Montar mensagem Baileys baseado no tipo de mídia
+                let baileysMessage;
+                if (step.media_url && step.media_type === 'image') {
+                    baileysMessage = { image: { url: step.media_url }, caption: messageContent };
+                } else if (step.media_url && step.media_type === 'video') {
+                    baileysMessage = { video: { url: step.media_url }, caption: messageContent };
+                } else if (step.media_url && step.media_type === 'document') {
+                    baileysMessage = {
+                        document: { url: step.media_url },
+                        fileName: step.media_filename || 'arquivo',
+                        mimetype: step.media_mimetype || 'application/pdf',
+                        caption: messageContent
+                    };
+                } else {
+                    baileysMessage = { text: messageContent };
+                }
+
+                // Enviar mensagem
+                const sent = await sendWhatsAppMessageForOrganization(orgId, lead.telefone, baileysMessage);
+
+                if (!sent) {
+                    console.error(`❌ [FOLLOW-UP] Falha ao enviar para lead "${lead.nome_completo}" (${lead.telefone})`);
+                    errors++;
+                    continue;
+                }
+
+                // Calcular próxima execução
+                const nextStepIndex = stepIndex + 1;
+                const stepsExecutados = exec.steps_executados || [];
+                stepsExecutados.push({
+                    step: stepIndex,
+                    titulo: step.titulo,
+                    executado_em: new Date().toISOString(),
+                    tipo: step.tipo_acao
+                });
+
+                if (nextStepIndex >= steps.length) {
+                    // Era o último step
+                    await supabase.from('lead_followup_executions').update({
+                        status: 'completed',
+                        step_atual: nextStepIndex,
+                        steps_executados: stepsExecutados,
+                        total_touchpoints: (exec.total_touchpoints || 0) + 1,
+                        updated_at: new Date().toISOString()
+                    }).eq('id', exec.id);
+                    console.log(`🏁 [FOLLOW-UP] Sequência COMPLETA para "${lead.nome_completo}" (${steps.length} steps)`);
+                } else {
+                    // Calcular delay para próximo step
+                    const nextStep = steps[nextStepIndex];
+                    const delayDays = nextStep.delay_days || 0;
+                    const delayHours = nextStep.delay_hours || 0;
+                    const nextExec = new Date(now);
+                    nextExec.setDate(nextExec.getDate() + delayDays);
+                    nextExec.setHours(nextExec.getHours() + delayHours);
+
+                    // Se próxima execução cair fora do horário, ajustar
+                    const nextExecHour = nextExec.getHours();
+                    if (nextExecHour < startH || nextExecHour >= endH) {
+                        nextExec.setHours(startH, startM, 0, 0);
+                        if (nextExecHour >= endH) {
+                            nextExec.setDate(nextExec.getDate() + 1);
+                        }
+                    }
+
+                    await supabase.from('lead_followup_executions').update({
+                        step_atual: nextStepIndex,
+                        proxima_execucao: nextExec.toISOString(),
+                        steps_executados: stepsExecutados,
+                        total_touchpoints: (exec.total_touchpoints || 0) + 1,
+                        updated_at: new Date().toISOString()
+                    }).eq('id', exec.id);
+                    console.log(`📨 [FOLLOW-UP] Step ${stepIndex + 1}/${steps.length} enviado para "${lead.nome_completo}" — próximo em ${delayDays}d ${delayHours}h`);
+                }
+
+                processed++;
+
+                // Rate limit: 3s entre envios
+                await new Promise(r => setTimeout(r, 3000));
+
+            } catch (stepError) {
+                console.error(`❌ [FOLLOW-UP] Erro ao processar execução ${exec.id}:`, stepError);
+                errors++;
+            }
+        }
+
+        console.log(`✅ [FOLLOW-UP] Processamento completo: ${processed} enviados, ${errors} erros.`);
+        return { processed, errors };
+
+    } catch (error) {
+        console.error('❌ [FOLLOW-UP] Erro geral:', error);
+        return { processed: 0, errors: 1 };
+    } finally {
+        isProcessingFollowups = false;
+    }
+}
+
+// Cron: processar follow-ups a cada 10 minutos
+cron.schedule('*/10 * * * *', processFollowupsForAllOrganizations);
+
+// Endpoints de follow-up
+app.post('/process-followups', async (req, res) => {
+    try {
+        const result = await processFollowupsForAllOrganizations();
+        res.json({ success: true, ...result });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/followup-status', async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('lead_followup_executions')
+            .select('status')
+            .then(({ data }) => {
+                const counts = { active: 0, completed: 0, responded: 0, failed: 0 };
+                (data || []).forEach(e => { counts[e.status] = (counts[e.status] || 0) + 1; });
+                return { data: counts, error: null };
+            });
+        res.json({ success: true, stats: data });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
 
 // ⭐ ENDPOINTS para resolver @lid manualmente
 app.post('/resolve-lid', async (req, res) => {
