@@ -2391,6 +2391,71 @@ $$ LANGUAGE plpgsql;
 -- 3. lesson-materials (PDFs for lessons)
 
 -- =====================================================================
+-- ADDITIONAL TABLES (used by baileys-server-multi.js)
+-- =====================================================================
+
+-- Auto messages (scheduled WhatsApp messages)
+CREATE TABLE IF NOT EXISTS auto_messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    user_id TEXT,
+    message TEXT,
+    scheduled_time TEXT NOT NULL,
+    scheduled_date DATE,
+    target_group TEXT NOT NULL,
+    is_active BOOLEAN DEFAULT true,
+    photo_url TEXT,
+    photo_caption TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TRIGGER update_auto_messages_updated_at
+    BEFORE UPDATE ON auto_messages
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Auto message logs (send history)
+CREATE TABLE IF NOT EXISTS auto_message_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    auto_message_id UUID REFERENCES auto_messages(id) ON DELETE CASCADE,
+    sent_at TIMESTAMPTZ DEFAULT NOW(),
+    status TEXT DEFAULT 'sent',
+    target_group TEXT,
+    error_message TEXT
+);
+
+-- Faturamento (billing/invoicing)
+CREATE TABLE IF NOT EXISTS faturamento (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    lead_id UUID REFERENCES leads(id) ON DELETE SET NULL,
+    mentorado_id UUID REFERENCES mentorados(id) ON DELETE SET NULL,
+    valor DECIMAL(12,2) DEFAULT 0,
+    data_faturamento TIMESTAMPTZ,
+    data_vencimento TIMESTAMPTZ,
+    status TEXT DEFAULT 'pendente',
+    descricao TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TRIGGER update_faturamento_updated_at
+    BEFORE UPDATE ON faturamento
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- LID phone mappings (Instagram @lid ↔ real phone number)
+CREATE TABLE IF NOT EXISTS lid_phone_mappings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    lid_id TEXT UNIQUE NOT NULL,
+    real_phone TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TRIGGER update_lid_phone_mappings_updated_at
+    BEFORE UPDATE ON lid_phone_mappings
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- =====================================================================
 -- SCHEMA COMPLETE
--- Total: ~115 tables, 10 views, 10+ functions
 -- =====================================================================
