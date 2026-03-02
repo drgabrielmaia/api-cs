@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const QRCode = require('qrcode');
 const cron = require('node-cron');
-const { createClient } = require('@supabase/supabase-js');
+// PostgreSQL direct connection (replaces @supabase/supabase-js)
 // const { GoogleGenerativeAI } = require('@google/generative-ai'); // COMENTADO - GEMINI AI
 const https = require('https');
 const fs = require('fs');
@@ -28,10 +28,8 @@ let qrCodeData = null;
 let isReady = false;
 let isConnecting = false;
 
-// Configuração do Supabase
-const supabaseUrl = 'https://udzmlnnztzzwrphhizol.supabase.co';
-const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVkem1sbm56dHp6d3JwaGhpem9sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc0MjkwNzYsImV4cCI6MjA3MzAwNTA3Nn0.KjihWHrNYxDO5ZZKpa8UYPAhw9HIU11yvAvvsNaiPZU';
-const supabase = createClient(supabaseUrl, supabaseKey);
+// Conexão direta com PostgreSQL (substituiu Supabase)
+const supabase = require('./db');
 
 const adminPhone = '558396910414'; // Gabriel Maia
 

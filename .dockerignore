@@ -4,7 +4,13 @@ npm-debug.log*
 .gitignore
 README.md
 Dockerfile
+docker-compose.yml
 .dockerignore
+.claude
 logs
 .wwebjs_auth
 .wwebjs_cache
+*.md
+*.sql
+docker/
+generate-jwt.js

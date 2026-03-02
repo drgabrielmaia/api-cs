@@ -7,7 +7,8 @@ const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
 const crypto = require('crypto');
-const { createClient } = require('@supabase/supabase-js');
+// PostgreSQL direct connection (replaces @supabase/supabase-js)
+// db.js provides supabase-compatible .from().select().eq() API
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { settingsManager } = require('./organization-settings');
 
@@ -265,10 +266,8 @@ function addNotificationLog(type, message, data = {}) {
     console.log(`${emoji} [${logEntry.timestamp}] ${message}`, data && Object.keys(data).length > 0 ? data : '');
 }
 
-// Configuração do Supabase
-const supabaseUrl = 'https://udzmlnnztzzwrphhizol.supabase.co';
-const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVkem1sbm56dHp6d3JwaGhpem9sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc0MjkwNzYsImV4cCI6MjA3MzAwNTA3Nn0.KjihWHrNYxDO5ZZKpa8UYPAhw9HIU11yvAvvsNaiPZU';
-const supabase = createClient(supabaseUrl, supabaseKey);
+// Conexão direta com PostgreSQL (substituiu Supabase)
+const supabase = require('./db');
 
 // Função para obter número do admin baseado na organização
 const getAdminPhone = async (organizationId = 'default') => {
@@ -3944,9 +3943,8 @@ app.get('/debug/events', async (req, res) => {
                 events: processedEvents
             },
             debug: {
-                supabaseUrl: supabaseUrl,
-                hasSupabaseKey: !!supabaseKey,
-                keyPreview: supabaseKey?.substring(0, 20) + '...'
+                database: 'PostgreSQL direct (pg)',
+                host: process.env.POSTGRES_HOST || 'postgres'
             }
         });
     } catch (error) {
