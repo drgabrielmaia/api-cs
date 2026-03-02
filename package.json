@@ -17,6 +17,7 @@
     "@whiskeysockets/baileys": "^7.0.0-rc.3",
     "cors": "^2.8.5",
     "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.3",
     "node-cron": "^4.2.1",
     "pdf-lib": "^1.17.1",
     "pg": "^8.19.0",
