@@ -1,10 +1,5 @@
 // Script para testar se as tabelas de faturamento existem no banco
-const { createClient } = require('@supabase/supabase-js');
-
-const supabase = createClient(
-    'https://udzmlnnztzzwrphhizol.supabase.co',
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVkem1sbm56dHp6d3JwaGhpem9sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc0MjkwNzYsImV4cCI6MjA3MzAwNTA3Nn0.KjihWHrNYxDO5ZZKpa8UYPAhw9HIU11yvAvvsNaiPZU'
-);
+const supabase = require('./db');
 
 async function testFaturamentoTables() {
     console.log('🔍 TESTANDO TABELAS DE FATURAMENTO...\n');

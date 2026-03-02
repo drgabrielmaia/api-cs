@@ -6,7 +6,7 @@ const { Boom } = require('@hapi/boom');
 const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
-const { createClient } = require('@supabase/supabase-js');
+// const { createClient } = require('@supabase/supabase-js'); // migrado pra pg
 
 const app = express();
 const port = process.env.PORT || 3001;
