@@ -214,11 +214,11 @@ const app = express();
 const port = process.env.PORT || 3001;
 
 app.use(cors({
-    origin: ['http://localhost:3000', 'https://api.medicosderesultado.com.br'],
+    origin: ['http://localhost:3000', 'https://api.medicosderesultado.com.br', 'https://cs.medicosderesultado.com.br'],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning']
-})); // CORS habilitado para localhost:3000
+}));
 
 // Middleware para capturar body raw (necessário para validação HMAC do Instagram)
 app.use('/instagram-webhook', express.raw({ 
@@ -268,6 +268,197 @@ function addNotificationLog(type, message, data = {}) {
 
 // Conexão direta com PostgreSQL (substituiu Supabase)
 const supabase = require('./db');
+const { generateToken, authMiddleware } = require('./auth-middleware');
+
+// ===== AUTH ROUTES =====
+
+// POST /auth/login
+app.post('/auth/login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        if (!email || !password) {
+            return res.status(400).json({ error: 'Email e senha são obrigatórios' });
+        }
+
+        const result = await supabase.query(
+            `SELECT id, nome, email, role, ativo, organization_id
+             FROM usuarios_financeiro
+             WHERE LOWER(email) = LOWER($1)
+               AND senha_hash = crypt($2, senha_hash)
+               AND ativo = true`,
+            [email, password]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(401).json({ error: 'Email ou senha incorretos' });
+        }
+
+        const user = result.rows[0];
+
+        const orgResult = await supabase.query(
+            `SELECT organization_id, role, is_active
+             FROM organization_users
+             WHERE LOWER(email) = LOWER($1) AND is_active = true
+             LIMIT 1`,
+            [email]
+        );
+
+        const orgUser = orgResult.rows[0] || null;
+        const organization_id = orgUser?.organization_id || user.organization_id;
+        const role = orgUser?.role || user.role || 'viewer';
+
+        if (!organization_id) {
+            return res.status(403).json({ error: 'Usuário sem organização ativa' });
+        }
+
+        const token = generateToken({
+            user_id: user.id,
+            email: user.email,
+            organization_id,
+            role,
+            nome: user.nome
+        });
+
+        return res.json({
+            token,
+            user: {
+                id: user.id,
+                email: user.email,
+                nome: user.nome,
+                role,
+                organization_id
+            }
+        });
+    } catch (err) {
+        console.error('❌ Login error:', err);
+        return res.status(500).json({ error: 'Erro interno no servidor' });
+    }
+});
+
+// GET /auth/me
+app.get('/auth/me', authMiddleware, async (req, res) => {
+    try {
+        const { user_id, email, organization_id } = req.user;
+
+        const userResult = await supabase.query(
+            `SELECT id, nome, email, role, organization_id
+             FROM usuarios_financeiro
+             WHERE id = $1 AND ativo = true`,
+            [user_id]
+        );
+
+        if (userResult.rows.length === 0) {
+            return res.status(401).json({ error: 'Usuário não encontrado ou inativo' });
+        }
+
+        const orgResult = await supabase.query(
+            `SELECT organization_id, role, is_active
+             FROM organization_users
+             WHERE LOWER(email) = LOWER($1) AND is_active = true
+             LIMIT 1`,
+            [email]
+        );
+
+        const orgUser = orgResult.rows[0] || null;
+
+        return res.json({
+            user: {
+                id: userResult.rows[0].id,
+                email: userResult.rows[0].email,
+                nome: userResult.rows[0].nome,
+            },
+            organization_id: orgUser?.organization_id || organization_id,
+            role: orgUser?.role || userResult.rows[0].role,
+            is_active: orgUser?.is_active ?? true
+        });
+    } catch (err) {
+        console.error('❌ Auth/me error:', err);
+        return res.status(500).json({ error: 'Erro interno' });
+    }
+});
+
+// GET /api/dashboard
+app.get('/api/dashboard', authMiddleware, async (req, res) => {
+    try {
+        const { organization_id } = req.user;
+        const { start, end } = req.query;
+
+        const queries = [
+            supabase.query(
+                `SELECT id, origem, created_at, status, valor_vendido, valor_arrecadado,
+                        data_venda, convertido_em, status_updated_at
+                 FROM leads WHERE organization_id = $1`,
+                [organization_id]
+            ),
+            supabase.query(
+                start && end
+                    ? `SELECT COUNT(*) as count FROM mentorados WHERE organization_id = $1 AND created_at >= $2 AND created_at <= $3`
+                    : `SELECT COUNT(*) as count FROM mentorados WHERE organization_id = $1`,
+                start && end ? [organization_id, start, end] : [organization_id]
+            ),
+            supabase.query(
+                start && end
+                    ? `SELECT COUNT(*) as count FROM calendar_events WHERE organization_id = $1 AND start_time >= $2 AND start_time <= $3`
+                    : `SELECT COUNT(*) as count FROM calendar_events WHERE organization_id = $1 AND start_time >= NOW()`,
+                start && end ? [organization_id, start, end] : [organization_id]
+            ),
+            supabase.query(
+                `SELECT COUNT(DISTINCT mentorado_id) as count FROM dividas
+                 WHERE organization_id = $1 AND status = 'pendente'`,
+                [organization_id]
+            ),
+            supabase.query(
+                `SELECT COUNT(*) as count FROM comissoes
+                 WHERE organization_id = $1 AND status = 'pendente'`,
+                [organization_id]
+            ),
+            supabase.query(
+                `SELECT nome_completo, email, status, created_at, updated_at
+                 FROM leads WHERE organization_id = $1
+                 ORDER BY updated_at DESC LIMIT 5`,
+                [organization_id]
+            ),
+            supabase.query(
+                `SELECT nome_completo, email, created_at, updated_at
+                 FROM mentorados WHERE organization_id = $1
+                 ORDER BY updated_at DESC LIMIT 3`,
+                [organization_id]
+            ),
+            supabase.query(
+                `SELECT
+                    date_trunc('month', COALESCE(data_venda::timestamptz, convertido_em, created_at)) as month,
+                    SUM(COALESCE(valor_vendido, 0)) as total_vendido,
+                    SUM(COALESCE(valor_arrecadado, 0)) as total_arrecadado,
+                    COUNT(*) as count
+                 FROM leads
+                 WHERE organization_id = $1 AND status = 'vendido'
+                   AND COALESCE(data_venda::timestamptz, convertido_em, created_at) >= NOW() - INTERVAL '6 months'
+                 GROUP BY month ORDER BY month`,
+                [organization_id]
+            ),
+        ];
+
+        const [
+            leadsResult, mentoradosResult, eventsResult,
+            dividasResult, comissoesResult,
+            recentLeadsResult, recentMentoradosResult, revenueResult
+        ] = await Promise.all(queries);
+
+        return res.json({
+            leads: leadsResult.rows,
+            mentorados_count: parseInt(mentoradosResult.rows[0]?.count || '0'),
+            events_count: parseInt(eventsResult.rows[0]?.count || '0'),
+            dividas_pendentes: parseInt(dividasResult.rows[0]?.count || '0'),
+            comissoes_pendentes: parseInt(comissoesResult.rows[0]?.count || '0'),
+            recent_leads: recentLeadsResult.rows,
+            recent_mentorados: recentMentoradosResult.rows,
+            revenue_by_month: revenueResult.rows
+        });
+    } catch (err) {
+        console.error('❌ Dashboard error:', err);
+        return res.status(500).json({ error: 'Erro ao carregar dashboard' });
+    }
+});
 
 // Função para obter número do admin baseado na organização
 const getAdminPhone = async (organizationId = 'default') => {
