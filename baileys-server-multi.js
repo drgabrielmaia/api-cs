@@ -460,6 +460,111 @@ app.get('/api/dashboard', authMiddleware, async (req, res) => {
     }
 });
 
+// =====================================================================
+// POST /api/query - Generic CRUD proxy (Supabase-compatible)
+// =====================================================================
+app.post('/api/query', authMiddleware, async (req, res) => {
+    try {
+        const { table, operation, select, filters, order, limit, offset, range,
+                single, maybeSingle, count, data, onConflict, returning } = req.body;
+
+        if (!table) return res.status(400).json({ data: null, error: 'Missing table' });
+
+        let qb = supabase.from(table);
+
+        // Apply operation
+        switch (operation || 'select') {
+            case 'select':
+                qb = qb.select(select || '*', count ? { count } : undefined);
+                break;
+            case 'insert':
+                qb = qb.insert(Array.isArray(data) ? data : [data]);
+                if (returning !== false) qb = qb.select(select || '*');
+                break;
+            case 'update':
+                qb = qb.update(data);
+                if (returning !== false) qb = qb.select(select || '*');
+                break;
+            case 'delete':
+                qb = qb.delete();
+                if (returning !== false) qb = qb.select(select || '*');
+                break;
+            case 'upsert':
+                qb = qb.upsert(Array.isArray(data) ? data : [data], onConflict ? { onConflict } : undefined);
+                if (returning !== false) qb = qb.select(select || '*');
+                break;
+        }
+
+        // Apply filters
+        for (const f of (filters || [])) {
+            switch (f.type) {
+                case 'eq': qb = qb.eq(f.column, f.value); break;
+                case 'neq': qb = qb.neq(f.column, f.value); break;
+                case 'gt': qb = qb.gt(f.column, f.value); break;
+                case 'gte': qb = qb.gte(f.column, f.value); break;
+                case 'lt': qb = qb.lt(f.column, f.value); break;
+                case 'lte': qb = qb.lte(f.column, f.value); break;
+                case 'in': qb = qb.in(f.column, f.value); break;
+                case 'is': qb = qb.is(f.column, f.value); break;
+                case 'not': qb = qb.not(f.column, f.op, f.value); break;
+                case 'or': qb = qb.or(f.value); break;
+                case 'ilike': qb = qb.ilike(f.column, f.value); break;
+                case 'like': qb = qb.like(f.column, f.value); break;
+            }
+        }
+
+        // Apply order
+        for (const o of (order || [])) {
+            qb = qb.order(o.column, { ascending: o.ascending !== false });
+        }
+
+        // Apply range (offset + limit)
+        if (range) {
+            qb = qb.range(range.from, range.to);
+        } else {
+            if (limit != null) qb = qb.limit(limit);
+        }
+
+        // Apply modifiers
+        if (single) qb = qb.single();
+        if (maybeSingle) qb = qb.maybeSingle();
+
+        const result = await qb;
+        res.json({ data: result.data, error: result.error ? result.error.message || result.error : null, count: result.count || null });
+    } catch (err) {
+        console.error('❌ /api/query error:', err.message);
+        res.status(500).json({ data: null, error: err.message, count: null });
+    }
+});
+
+// =====================================================================
+// POST /api/rpc/:name - RPC proxy for stored procedures
+// =====================================================================
+app.post('/api/rpc/:name', authMiddleware, async (req, res) => {
+    try {
+        const { name } = req.params;
+        const params = req.body || {};
+
+        // Build parameterized function call
+        const paramKeys = Object.keys(params);
+        const values = paramKeys.map(k => params[k]);
+
+        let sql;
+        if (paramKeys.length === 0) {
+            sql = `SELECT * FROM ${name}()`;
+        } else {
+            const paramList = paramKeys.map((k, i) => `"${k}" => $${i + 1}`).join(', ');
+            sql = `SELECT * FROM ${name}(${paramList})`;
+        }
+
+        const result = await supabase.query(sql, values);
+        res.json({ data: result.rows, error: null });
+    } catch (err) {
+        console.error(`❌ /api/rpc/${req.params.name} error:`, err.message);
+        res.status(400).json({ data: null, error: err.message });
+    }
+});
+
 // Função para obter número do admin baseado na organização
 const getAdminPhone = async (organizationId = 'default') => {
   return await settingsManager.getAdminPhone(organizationId);

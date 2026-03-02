@@ -38,9 +38,12 @@ const FK_MAP = {
     calendar_events: {
         mentorados: { fk: 'mentorado_id', pk: 'id' },
         leads: { fk: 'lead_id', pk: 'id' },
+        organizations: { fk: 'organization_id', pk: 'id' },
+        closers: { fk: 'closer_id', pk: 'id' },
     },
     dividas: {
         mentorados: { fk: 'mentorado_id', pk: 'id' },
+        organizations: { fk: 'organization_id', pk: 'id' },
     },
     lead_followup_executions: {
         leads: { fk: 'lead_id', pk: 'id' },
@@ -53,12 +56,109 @@ const FK_MAP = {
         auto_messages: { fk: 'auto_message_id', pk: 'id' },
     },
     organizations: {},
-    leads: { organizations: { fk: 'organization_id', pk: 'id' } },
+    leads: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+        closers: { fk: 'closer_id', pk: 'id' },
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+    },
     lid_phone_mappings: {},
     auto_messages: {},
     instagram_messages: {},
     profiles: { organizations: { fk: 'organization_id', pk: 'id' } },
     mentorados: { organizations: { fk: 'organization_id', pk: 'id' } },
+    comissoes: {
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+        organizations: { fk: 'organization_id', pk: 'id' },
+        leads: { fk: 'lead_id', pk: 'id' },
+    },
+    commissions: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    closers: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    closers_vendas: {
+        closers: { fk: 'closer_id', pk: 'id' },
+        leads: { fk: 'lead_id', pk: 'id' },
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    closers_atividades: {
+        closers: { fk: 'closer_id', pk: 'id' },
+    },
+    form_submissions: {
+        form_templates: { fk: 'form_id', pk: 'id' },
+    },
+    formularios_respostas: {
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+    },
+    organization_users: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    kanban_tasks: {
+        kanban_columns: { fk: 'column_id', pk: 'id' },
+    },
+    kanban_columns: {
+        kanban_boards: { fk: 'board_id', pk: 'id' },
+    },
+    video_lessons: {
+        video_modules: { fk: 'module_id', pk: 'id' },
+    },
+    lesson_progress: {
+        video_lessons: { fk: 'lesson_id', pk: 'id' },
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+    },
+    video_access_control: {
+        video_modules: { fk: 'module_id', pk: 'id' },
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+    },
+    referrals: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    referral_payments: {
+        referrals: { fk: 'referral_id', pk: 'id' },
+    },
+    despesas_mensais: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    historico_pagamentos: {
+        dividas: { fk: 'divida_id', pk: 'id' },
+    },
+    notification_logs: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    whatsapp_messages: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    agendamentos: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    pontuacao_mentorados: {
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+    },
+    checkins: {
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+    },
+    metas: {
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+    },
+    contracts: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    instagram_automations: {},
+    instagram_funnels: {},
+    instagram_funnel_steps: {
+        instagram_funnels: { fk: 'funnel_id', pk: 'id' },
+    },
+    scoring_configurations: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    lead_followup_sequences: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    faturamento: {
+        leads: { fk: 'lead_id', pk: 'id' },
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+    },
 };
 
 // =====================================================================
@@ -179,17 +279,23 @@ class QueryBuilder {
         this._values = [];
         this._orderBy = [];
         this._limitVal = null;
+        this._offsetVal = null;
         this._singleRow = false;
+        this._maybeSingleRow = false;
         this._operation = 'select'; // select, insert, update, delete, upsert
         this._insertData = null;
         this._updateData = null;
         this._upsertConflict = null;
         this._returnData = false;
+        this._countMode = false;
+        this._headOnly = false;
     }
 
     // --- Select ---
-    select(cols) {
+    select(cols, options) {
         if (cols !== undefined) this._selectStr = cols;
+        if (options?.count === 'exact') this._countMode = true;
+        if (options?.head) this._headOnly = true;
         this._returnData = true;
         return this;
     }
@@ -282,9 +388,28 @@ class QueryBuilder {
         return this;
     }
 
+    ilike(col, val) {
+        this._values.push(val);
+        this._wheres.push(`"${this._resolveCol(col)}" ILIKE $${this._values.length}`);
+        return this;
+    }
+
+    like(col, val) {
+        this._values.push(val);
+        this._wheres.push(`"${this._resolveCol(col)}" LIKE $${this._values.length}`);
+        return this;
+    }
+
     not(col, op, val) {
         if (op === 'is' && val === null) {
             this._wheres.push(`"${this._resolveCol(col)}" IS NOT NULL`);
+        } else if (op === 'in' && Array.isArray(val)) {
+            if (val.length === 0) return this;
+            const placeholders = val.map(v => {
+                this._values.push(v);
+                return `$${this._values.length}`;
+            });
+            this._wheres.push(`"${this._resolveCol(col)}" NOT IN (${placeholders.join(', ')})`);
         } else if (op === 'eq') {
             this._values.push(val);
             this._wheres.push(`"${this._resolveCol(col)}" != $${this._values.length}`);
@@ -326,6 +451,12 @@ class QueryBuilder {
         return this;
     }
 
+    range(from, to) {
+        this._offsetVal = from;
+        this._limitVal = to - from + 1;
+        return this;
+    }
+
     single() {
         this._singleRow = true;
         this._limitVal = 1;
@@ -334,6 +465,7 @@ class QueryBuilder {
 
     maybeSingle() {
         this._singleRow = true;
+        this._maybeSingleRow = true;
         this._limitVal = 1;
         return this;
     }
@@ -376,9 +508,23 @@ class QueryBuilder {
             const result = await pool.query(sql, values);
 
             let data = result.rows;
+            let count = null;
             const { nestKeys } = this._operation === 'select'
                 ? parseSelect(this._selectStr, this._table)
                 : { nestKeys: [] };
+
+            // Extract count from window function
+            if (this._countMode && data.length > 0) {
+                count = parseInt(data[0].__total_count || '0', 10);
+                data = data.map(({ __total_count, ...rest }) => rest);
+            } else if (this._countMode) {
+                count = 0;
+            }
+
+            // Head-only mode: return count without data
+            if (this._headOnly) {
+                return { data: null, error: null, count };
+            }
 
             // Clean null joins
             if (nestKeys.length > 0) {
@@ -386,20 +532,32 @@ class QueryBuilder {
             }
 
             if (this._singleRow) {
-                data = data.length > 0 ? data[0] : null;
+                if (data.length === 0) {
+                    data = null;
+                    if (!this._maybeSingleRow) {
+                        return { data: null, error: { code: 'PGRST116', message: 'No rows found' }, count };
+                    }
+                } else {
+                    data = data[0];
+                }
             }
 
-            return { data, error: null };
+            return { data, error: null, count };
         } catch (err) {
             console.error(`❌ [DB] Error in ${this._operation} on "${this._table}":`, err.message);
-            return { data: null, error: err };
+            return { data: null, error: err, count: null };
         }
     }
 
     _buildSelect() {
         const { columns, joins } = parseSelect(this._selectStr, this._table);
 
-        let sql = `SELECT ${columns.join(', ')} FROM "${this._table}"`;
+        // Add COUNT(*) OVER() for exact count mode
+        const colList = this._countMode
+            ? [...columns, 'COUNT(*) OVER() AS __total_count']
+            : columns;
+
+        let sql = `SELECT ${colList.join(', ')} FROM "${this._table}"`;
 
         if (joins.length > 0) {
             sql += ' ' + joins.join(' ');
@@ -415,6 +573,10 @@ class QueryBuilder {
 
         if (this._limitVal !== null) {
             sql += ` LIMIT ${this._limitVal}`;
+        }
+
+        if (this._offsetVal !== null) {
+            sql += ` OFFSET ${this._offsetVal}`;
         }
 
         return { sql, values: this._values };
