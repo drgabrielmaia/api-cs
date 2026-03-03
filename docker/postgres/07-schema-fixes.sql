@@ -132,6 +132,38 @@ UPDATE calendar_events SET end_datetime = end_time WHERE end_datetime IS NULL AN
 ALTER TABLE appointments ADD COLUMN IF NOT EXISTS created_by UUID;
 
 -- =====================================================================
+-- 14. kanban_boards - Missing type, owner_id, is_active
+-- =====================================================================
+ALTER TABLE kanban_boards ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'geral';
+ALTER TABLE kanban_boards ADD COLUMN IF NOT EXISTS owner_id UUID;
+ALTER TABLE kanban_boards ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
+
+-- Sync existing data
+UPDATE kanban_boards SET owner_id = user_id WHERE owner_id IS NULL AND user_id IS NOT NULL;
+
+-- =====================================================================
+-- 15. kanban_columns - Frontend uses 'position' but schema has 'column_order'
+-- =====================================================================
+ALTER TABLE kanban_columns ADD COLUMN IF NOT EXISTS position INTEGER DEFAULT 0;
+ALTER TABLE kanban_columns ADD COLUMN IF NOT EXISTS wip_limit INTEGER;
+
+-- Sync existing data
+UPDATE kanban_columns SET position = column_order WHERE position = 0 AND column_order != 0;
+
+-- =====================================================================
+-- 16. kanban_tasks - Missing frontend columns
+-- =====================================================================
+ALTER TABLE kanban_tasks ADD COLUMN IF NOT EXISTS assigned_to_email TEXT;
+ALTER TABLE kanban_tasks ADD COLUMN IF NOT EXISTS created_by_email TEXT;
+ALTER TABLE kanban_tasks ADD COLUMN IF NOT EXISTS estimated_hours NUMERIC;
+ALTER TABLE kanban_tasks ADD COLUMN IF NOT EXISTS actual_hours NUMERIC DEFAULT 0;
+ALTER TABLE kanban_tasks ADD COLUMN IF NOT EXISTS position INTEGER DEFAULT 0;
+ALTER TABLE kanban_tasks ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}';
+
+-- Sync existing data
+UPDATE kanban_tasks SET position = task_order WHERE position = 0 AND task_order != 0;
+
+-- =====================================================================
 -- Done!
 -- =====================================================================
 SELECT 'Schema fixes applied successfully!' AS result;
