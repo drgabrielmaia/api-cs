@@ -109,6 +109,29 @@ UPDATE mentorados SET nome = nome_completo WHERE nome IS NULL AND nome_completo 
 UPDATE mentorados SET whatsapp = telefone WHERE whatsapp IS NULL AND telefone IS NOT NULL;
 
 -- =====================================================================
+-- 11. closer_atividades - Frontend uses 'closer_atividades' but schema
+--     has 'closers_atividades'. Create a VIEW alias.
+-- =====================================================================
+CREATE OR REPLACE VIEW closer_atividades AS SELECT * FROM closers_atividades;
+
+-- =====================================================================
+-- 12. calendar_events - Frontend uses start_datetime/end_datetime
+--     but schema has start_time/end_time
+-- =====================================================================
+ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS start_datetime TIMESTAMPTZ;
+ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS end_datetime TIMESTAMPTZ;
+ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS sdr_id UUID;
+
+-- Sync existing data
+UPDATE calendar_events SET start_datetime = start_time WHERE start_datetime IS NULL AND start_time IS NOT NULL;
+UPDATE calendar_events SET end_datetime = end_time WHERE end_datetime IS NULL AND end_time IS NOT NULL;
+
+-- =====================================================================
+-- 13. appointments - Missing created_by column
+-- =====================================================================
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS created_by UUID;
+
+-- =====================================================================
 -- Done!
 -- =====================================================================
 SELECT 'Schema fixes applied successfully!' AS result;

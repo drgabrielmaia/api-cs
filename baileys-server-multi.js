@@ -530,10 +530,13 @@ app.post('/api/query', authMiddleware, async (req, res) => {
         if (maybeSingle) qb = qb.maybeSingle();
 
         const result = await qb;
-        res.json({ data: result.data, error: result.error ? result.error.message || result.error : null, count: result.count || null });
+        const errorOut = result.error
+            ? { message: result.error.message || String(result.error), code: result.error.code || undefined }
+            : null;
+        res.json({ data: result.data, error: errorOut, count: result.count != null ? result.count : null });
     } catch (err) {
         console.error('❌ /api/query error:', err.message);
-        res.status(500).json({ data: null, error: err.message, count: null });
+        res.status(500).json({ data: null, error: { message: err.message }, count: null });
     }
 });
 
@@ -542,7 +545,7 @@ app.post('/api/query', authMiddleware, async (req, res) => {
 // =====================================================================
 app.post('/api/rpc/:name', authMiddleware, async (req, res) => {
     try {
-        const { name } = req.params;
+        const name = req.params.name.replace(/[^a-zA-Z0-9_]/g, '');
         const params = req.body || {};
 
         // Build parameterized function call
@@ -561,7 +564,7 @@ app.post('/api/rpc/:name', authMiddleware, async (req, res) => {
         res.json({ data: result.rows, error: null });
     } catch (err) {
         console.error(`❌ /api/rpc/${req.params.name} error:`, err.message);
-        res.status(400).json({ data: null, error: err.message });
+        res.status(400).json({ data: null, error: { message: err.message } });
     }
 });
 
