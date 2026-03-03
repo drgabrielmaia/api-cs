@@ -76,6 +76,7 @@ const FK_MAP = {
     },
     closers: {
         organizations: { fk: 'organization_id', pk: 'id' },
+        closer_levels: { fk: 'closer_level_id', pk: 'id' },
     },
     closers_vendas: {
         closers: { fk: 'closer_id', pk: 'id' },
@@ -143,6 +144,9 @@ const FK_MAP = {
     },
     contracts: {
         organizations: { fk: 'organization_id', pk: 'id' },
+        contract_templates: { fk: 'template_id', pk: 'id' },
+        leads: { fk: 'lead_id', pk: 'id' },
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
     },
     instagram_automations: {},
     instagram_funnels: {},
@@ -158,6 +162,115 @@ const FK_MAP = {
     faturamento: {
         leads: { fk: 'lead_id', pk: 'id' },
         mentorados: { fk: 'mentorado_id', pk: 'id' },
+    },
+    closer_levels: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    closer_level_assignments: {
+        closers: { fk: 'closer_id', pk: 'id' },
+        closer_levels: { fk: 'level_id', pk: 'id' },
+    },
+    icp_form_templates: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    icp_responses: {
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+        icp_form_templates: { fk: 'template_id', pk: 'id' },
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    transacoes_financeiras: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+        leads: { fk: 'lead_id', pk: 'id' },
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+    },
+    usuarios_financeiro: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    group_events: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    group_event_participants: {
+        group_events: { fk: 'event_id', pk: 'id' },
+        leads: { fk: 'lead_id', pk: 'id' },
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+    },
+    contract_templates: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    contract_audit_log: {
+        contracts: { fk: 'contract_id', pk: 'id' },
+    },
+    kanban_boards: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    video_modules: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+        module_categories: { fk: 'category_id', pk: 'id' },
+    },
+    continue_watching: {
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+        video_lessons: { fk: 'lesson_id', pk: 'id' },
+    },
+    notification_settings: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    closer_availability: {
+        closers: { fk: 'closer_id', pk: 'id' },
+    },
+    closer_schedule_config: {
+        closers: { fk: 'closer_id', pk: 'id' },
+    },
+    closer_study_materials: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+        closer_material_categories: { fk: 'category_id', pk: 'id' },
+    },
+    closer_material_progress: {
+        closers: { fk: 'closer_id', pk: 'id' },
+        closer_study_materials: { fk: 'material_id', pk: 'id' },
+    },
+    sdrs: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+        profiles: { fk: 'profile_id', pk: 'id' },
+    },
+    social_sellers: {
+        organizations: { fk: 'organization_id', pk: 'id' },
+        profiles: { fk: 'profile_id', pk: 'id' },
+    },
+    closers_metas: {
+        closers: { fk: 'closer_id', pk: 'id' },
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    lead_notes: {
+        leads: { fk: 'lead_id', pk: 'id' },
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    lead_historico: {
+        leads: { fk: 'lead_id', pk: 'id' },
+    },
+    lead_history: {
+        leads: { fk: 'lead_id', pk: 'id' },
+    },
+    lead_qualification_details: {
+        leads: { fk: 'lead_id', pk: 'id' },
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    video_progress: {
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+        video_lessons: { fk: 'lesson_id', pk: 'id' },
+    },
+    video_access_control: {
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+        video_modules: { fk: 'module_id', pk: 'id' },
+    },
+    mentorado_info: {
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+    },
+    mentorado_atividades: {
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    categorias_financeiras: {
+        organizations: { fk: 'organization_id', pk: 'id' },
     },
 };
 
