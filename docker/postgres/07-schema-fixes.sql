@@ -164,6 +164,106 @@ ALTER TABLE kanban_tasks ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}';
 UPDATE kanban_tasks SET position = task_order WHERE position = 0 AND task_order != 0;
 
 -- =====================================================================
+-- 17. Kanban functions - Frontend expects different signatures/return formats
+-- =====================================================================
+
+-- Drop old signatures so we can recreate with new params
+DROP FUNCTION IF EXISTS get_kanban_board_data(UUID);
+DROP FUNCTION IF EXISTS initialize_default_kanban(UUID, UUID);
+DROP FUNCTION IF EXISTS move_kanban_task(UUID, UUID, INTEGER);
+
+-- initialize_default_kanban: frontend passes p_organization_id + p_user_email (not UUID)
+CREATE OR REPLACE FUNCTION initialize_default_kanban(
+    p_organization_id UUID,
+    p_user_email TEXT DEFAULT NULL
+) RETURNS TABLE(success BOOLEAN, board_id UUID) AS $$
+DECLARE
+    v_board_id UUID;
+BEGIN
+    INSERT INTO kanban_boards (organization_id, name, type, is_active)
+    VALUES (p_organization_id, 'Pipeline de Vendas', 'geral', true)
+    RETURNING id INTO v_board_id;
+
+    INSERT INTO kanban_columns (board_id, name, color, column_order, position) VALUES
+        (v_board_id, 'Novo', '#3B82F6', 0, 0),
+        (v_board_id, 'Contactado', '#8B5CF6', 1, 1),
+        (v_board_id, 'Qualificado', '#F59E0B', 2, 2),
+        (v_board_id, 'Proposta', '#10B981', 3, 3),
+        (v_board_id, 'Fechado', '#22C55E', 4, 4),
+        (v_board_id, 'Perdido', '#EF4444', 5, 5);
+
+    RETURN QUERY SELECT true, v_board_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- get_kanban_board_data: frontend passes p_board_id + p_user_email
+-- expects data[0] = { board_info, columns_data, tasks_data }
+CREATE OR REPLACE FUNCTION get_kanban_board_data(
+    p_board_id UUID,
+    p_user_email TEXT DEFAULT NULL
+) RETURNS TABLE(board_info JSONB, columns_data JSONB, tasks_data JSONB) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        (SELECT to_jsonb(b) FROM kanban_boards b WHERE b.id = p_board_id),
+        COALESCE(
+            (SELECT jsonb_agg(
+                jsonb_build_object(
+                    'id', col.id,
+                    'name', col.name,
+                    'color', col.color,
+                    'position', COALESCE(col.position, col.column_order),
+                    'wip_limit', col.wip_limit,
+                    'task_count', (SELECT count(*) FROM kanban_tasks t WHERE t.column_id = col.id)
+                ) ORDER BY COALESCE(col.position, col.column_order)
+            )
+            FROM kanban_columns col WHERE col.board_id = p_board_id),
+            '[]'::jsonb
+        ),
+        COALESCE(
+            (SELECT jsonb_agg(
+                jsonb_build_object(
+                    'id', t.id,
+                    'title', t.title,
+                    'description', t.description,
+                    'column_id', t.column_id,
+                    'board_id', t.board_id,
+                    'assigned_to_email', t.assigned_to_email,
+                    'created_by_email', t.created_by_email,
+                    'priority', t.priority,
+                    'due_date', t.due_date,
+                    'estimated_hours', t.estimated_hours,
+                    'actual_hours', COALESCE(t.actual_hours, 0),
+                    'position', COALESCE(t.position, t.task_order),
+                    'tags', COALESCE(t.tags, '{}'),
+                    'created_at', t.created_at,
+                    'updated_at', t.updated_at
+                ) ORDER BY COALESCE(t.position, t.task_order)
+            )
+            FROM kanban_tasks t WHERE t.board_id = p_board_id),
+            '[]'::jsonb
+        );
+END;
+$$ LANGUAGE plpgsql;
+
+-- move_kanban_task: frontend passes p_task_id, p_new_column_id, p_new_position, p_user_email
+CREATE OR REPLACE FUNCTION move_kanban_task(
+    p_task_id UUID,
+    p_new_column_id UUID,
+    p_new_position INTEGER,
+    p_user_email TEXT DEFAULT NULL
+) RETURNS VOID AS $$
+BEGIN
+    UPDATE kanban_tasks
+    SET column_id = p_new_column_id,
+        task_order = p_new_position,
+        position = p_new_position,
+        updated_at = NOW()
+    WHERE id = p_task_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- =====================================================================
 -- Done!
 -- =====================================================================
 SELECT 'Schema fixes applied successfully!' AS result;
