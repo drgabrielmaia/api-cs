@@ -264,6 +264,88 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- =====================================================================
+-- 18. closers - Frontend uses 'nome' alias in some pages
+-- =====================================================================
+ALTER TABLE closers ADD COLUMN IF NOT EXISTS nome TEXT;
+UPDATE closers SET nome = nome_completo WHERE nome IS NULL AND nome_completo IS NOT NULL;
+
+-- =====================================================================
+-- 19. video_modules - Frontend uses 'order_index' but schema has 'module_order'
+-- =====================================================================
+ALTER TABLE video_modules ADD COLUMN IF NOT EXISTS order_index INTEGER DEFAULT 0;
+UPDATE video_modules SET order_index = module_order WHERE order_index = 0 AND module_order != 0;
+
+-- =====================================================================
+-- 20. video_access_control - Frontend uses 'has_access' but schema has 'is_active'
+--     Also frontend uses 'granted_by' as TEXT (email) but schema has UUID
+-- =====================================================================
+ALTER TABLE video_access_control ADD COLUMN IF NOT EXISTS has_access BOOLEAN DEFAULT true;
+UPDATE video_access_control SET has_access = is_active WHERE has_access IS NULL;
+
+-- =====================================================================
+-- 21. dividas - Frontend uses 'mentorado_nome' denormalized column
+-- =====================================================================
+ALTER TABLE dividas ADD COLUMN IF NOT EXISTS mentorado_nome TEXT;
+-- Sync from mentorados
+UPDATE dividas d SET mentorado_nome = m.nome_completo
+FROM mentorados m WHERE d.mentorado_id = m.id AND d.mentorado_nome IS NULL;
+
+-- =====================================================================
+-- 22. calendar_events - start_time is NOT NULL but frontend sends start_datetime
+--     Need to allow NULL on start_time and auto-populate via trigger
+-- =====================================================================
+ALTER TABLE calendar_events ALTER COLUMN start_time DROP NOT NULL;
+
+-- Create trigger to sync start_datetime → start_time on insert/update
+CREATE OR REPLACE FUNCTION sync_calendar_event_times()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- If start_datetime is set but start_time is not, copy it
+    IF NEW.start_datetime IS NOT NULL AND NEW.start_time IS NULL THEN
+        NEW.start_time := NEW.start_datetime;
+    END IF;
+    -- If end_datetime is set but end_time is not, copy it
+    IF NEW.end_datetime IS NOT NULL AND NEW.end_time IS NULL THEN
+        NEW.end_time := NEW.end_datetime;
+    END IF;
+    -- Reverse: if start_time is set but start_datetime is not
+    IF NEW.start_time IS NOT NULL AND NEW.start_datetime IS NULL THEN
+        NEW.start_datetime := NEW.start_time;
+    END IF;
+    IF NEW.end_time IS NOT NULL AND NEW.end_datetime IS NULL THEN
+        NEW.end_datetime := NEW.end_time;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_sync_calendar_times ON calendar_events;
+CREATE TRIGGER trg_sync_calendar_times
+    BEFORE INSERT OR UPDATE ON calendar_events
+    FOR EACH ROW EXECUTE FUNCTION sync_calendar_event_times();
+
+-- =====================================================================
+-- 23. user_settings - Frontend uses 'calendar_settings' column
+-- =====================================================================
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_settings JSONB;
+
+-- =====================================================================
+-- 24. lead_followup_sequences - Ensure criterios_ativacao accepts objects
+--     (already JSONB, but add missing frontend columns)
+-- =====================================================================
+ALTER TABLE lead_followup_sequences ADD COLUMN IF NOT EXISTS created_by_email TEXT;
+
+-- =====================================================================
+-- 25. exercise_checkpoints - Frontend uses 'order_index'
+-- =====================================================================
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'exercise_checkpoints') THEN
+        EXECUTE 'ALTER TABLE exercise_checkpoints ADD COLUMN IF NOT EXISTS order_index INTEGER DEFAULT 0';
+    END IF;
+END $$;
+
+-- =====================================================================
 -- Done!
 -- =====================================================================
 SELECT 'Schema fixes applied successfully!' AS result;

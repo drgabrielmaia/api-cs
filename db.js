@@ -695,6 +695,16 @@ class QueryBuilder {
         return { sql, values: this._values };
     }
 
+    // Serialize plain objects/arrays to JSON strings for JSONB columns
+    _prepareValue(val) {
+        if (val === null || val === undefined) return null;
+        if (val instanceof Date) return val;
+        if (Array.isArray(val) || (typeof val === 'object' && val.constructor === Object)) {
+            return JSON.stringify(val);
+        }
+        return val;
+    }
+
     _buildInsert() {
         const rows = this._insertData;
         if (!rows || rows.length === 0) {
@@ -707,7 +717,7 @@ class QueryBuilder {
 
         for (const row of rows) {
             const placeholders = allKeys.map(key => {
-                values.push(row[key] !== undefined ? row[key] : null);
+                values.push(this._prepareValue(row[key] !== undefined ? row[key] : null));
                 return `$${values.length}`;
             });
             rowPlaceholders.push(`(${placeholders.join(', ')})`);
@@ -730,7 +740,7 @@ class QueryBuilder {
         const baseOffset = values.length;
 
         const setClauses = keys.map((key, i) => {
-            values.push(data[key]);
+            values.push(this._prepareValue(data[key]));
             return `"${key}" = $${baseOffset + i + 1}`;
         });
 
@@ -773,7 +783,7 @@ class QueryBuilder {
 
         for (const row of rows) {
             const placeholders = allKeys.map(key => {
-                values.push(row[key] !== undefined ? row[key] : null);
+                values.push(this._prepareValue(row[key] !== undefined ? row[key] : null));
                 return `$${values.length}`;
             });
             rowPlaceholders.push(`(${placeholders.join(', ')})`);
