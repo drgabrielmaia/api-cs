@@ -463,7 +463,24 @@ app.get('/api/dashboard', authMiddleware, async (req, res) => {
 // =====================================================================
 // POST /api/query - Generic CRUD proxy (Supabase-compatible)
 // =====================================================================
-app.post('/api/query', authMiddleware, async (req, res) => {
+app.post('/api/query', (req, res, next) => {
+    // Optional auth: try to validate JWT, but allow SELECT without it
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.split(' ')[1];
+        try {
+            const { verifyToken } = require('./auth-middleware');
+            req.user = verifyToken(token);
+        } catch (err) {
+            // Invalid token - still allow SELECT
+        }
+    }
+    const op = req.body?.operation || 'select';
+    if (!req.user && op !== 'select') {
+        return res.status(401).json({ data: null, error: { message: 'Token necessário para operações de escrita' } });
+    }
+    next();
+}, async (req, res) => {
     try {
         const { table, operation, select, filters, order, limit, offset, range,
                 single, maybeSingle, count, data, onConflict, returning } = req.body;
