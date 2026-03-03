@@ -1627,6 +1627,269 @@ ID do evento: ${data[0]?.id}`;
 });
 
 
+// ===== PUBLIC MENTORADO ROUTES (no auth required) =====
+let bcrypt;
+try {
+    bcrypt = require('bcryptjs');
+} catch (e) {
+    console.warn('⚠️ bcryptjs not installed, using plain text password comparison only');
+    bcrypt = {
+        compare: async (password, hash) => password === hash,
+        hash: async (password, rounds) => password,
+    };
+}
+
+// POST /public/mentorados/login
+app.post('/public/mentorados/login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        if (!email || !password) {
+            return res.status(400).json({ error: 'Email e senha são obrigatórios' });
+        }
+
+        // Buscar mentorado por email (case-insensitive)
+        const result = await supabase.query(
+            `SELECT * FROM mentorados WHERE LOWER(email) = LOWER($1) LIMIT 1`,
+            [email.trim()]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(401).json({ error: 'Email ou senha incorretos' });
+        }
+
+        const mentorado = result.rows[0];
+
+        // Check access blocking
+        if (mentorado.estado_atual === 'churn') {
+            return res.status(403).json({ error: 'Conta marcada como churn' });
+        }
+        if (mentorado.data_entrada) {
+            const dataEntrada = new Date(mentorado.data_entrada);
+            const agora = new Date();
+            const diffMonths = (agora.getFullYear() - dataEntrada.getFullYear()) * 12 + (agora.getMonth() - dataEntrada.getMonth());
+            if (diffMonths >= 12) {
+                return res.status(403).json({ error: 'Período de acesso expirado (12 meses)' });
+            }
+        }
+        if (mentorado.status_login && mentorado.status_login !== 'ativo') {
+            return res.status(403).json({ error: 'Status de login inativo' });
+        }
+
+        // Verify password
+        if (mentorado.password_hash) {
+            const isBcrypt = /^\$2[aby]\$\d+\$/.test(mentorado.password_hash);
+            if (isBcrypt) {
+                const valid = await bcrypt.compare(password, mentorado.password_hash);
+                if (!valid) {
+                    return res.status(401).json({ error: 'Email ou senha incorretos' });
+                }
+            } else {
+                // Plain text comparison
+                if (password !== mentorado.password_hash) {
+                    return res.status(401).json({ error: 'Email ou senha incorretos' });
+                }
+                // Migrate to bcrypt
+                try {
+                    const hash = await bcrypt.hash(password, 12);
+                    await supabase.query(
+                        `UPDATE mentorados SET password_hash = $1 WHERE id = $2`,
+                        [hash, mentorado.id]
+                    );
+                    console.log(`🔄 Migrated password to bcrypt for mentorado ${mentorado.id}`);
+                } catch (hashErr) {
+                    console.warn('⚠️ Failed to migrate password hash:', hashErr.message);
+                }
+            }
+        }
+        // If no password_hash, allow any password (first login)
+
+        // Generate JWT token for mentorado (so ApiQueryBuilder works)
+        const mentoradoToken = generateToken({
+            user_id: mentorado.id,
+            email: mentorado.email,
+            organization_id: mentorado.organization_id || '9c8c0033-15ea-4e33-a55f-28d81a19693b',
+            role: 'mentorado',
+            nome: mentorado.nome_completo,
+            is_mentorado: true,
+        });
+
+        return res.json({
+            success: true,
+            token: mentoradoToken,
+            mentorado: {
+                id: mentorado.id,
+                nome_completo: mentorado.nome_completo,
+                email: mentorado.email,
+                telefone: mentorado.telefone,
+                estado_entrada: mentorado.estado_entrada,
+                estado_atual: mentorado.estado_atual,
+                data_entrada: mentorado.data_entrada,
+                data_nascimento: mentorado.data_nascimento,
+                endereco: mentorado.endereco,
+                crm: mentorado.crm,
+                cpf: mentorado.cpf,
+                rg: mentorado.rg,
+                origem_conhecimento: mentorado.origem_conhecimento,
+                data_inicio_mentoria: mentorado.data_inicio_mentoria,
+                status_login: mentorado.status_login,
+                genero: mentorado.genero,
+                especialidade: mentorado.especialidade,
+                organization_id: mentorado.organization_id,
+                created_at: mentorado.created_at,
+                turma: mentorado.turma,
+            }
+        });
+    } catch (err) {
+        console.error('❌ Mentorado login error:', err);
+        return res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+});
+
+// GET /public/mentorados/validate/:id
+app.get('/public/mentorados/validate/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        if (!id) {
+            return res.status(400).json({ error: 'ID é obrigatório' });
+        }
+
+        const result = await supabase.query(
+            `SELECT * FROM mentorados WHERE id = $1 LIMIT 1`,
+            [id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Mentorado não encontrado' });
+        }
+
+        const mentorado = result.rows[0];
+
+        // Check access blocking
+        if (mentorado.estado_atual === 'churn') {
+            return res.status(403).json({ error: 'Conta marcada como churn', blocked: true });
+        }
+        if (mentorado.data_entrada) {
+            const dataEntrada = new Date(mentorado.data_entrada);
+            const agora = new Date();
+            const diffMonths = (agora.getFullYear() - dataEntrada.getFullYear()) * 12 + (agora.getMonth() - dataEntrada.getMonth());
+            if (diffMonths >= 12) {
+                return res.status(403).json({ error: 'Período de acesso expirado (12 meses)', blocked: true });
+            }
+        }
+        if (mentorado.status_login && mentorado.status_login !== 'ativo') {
+            return res.status(403).json({ error: 'Status de login inativo', blocked: true });
+        }
+
+        return res.json({
+            success: true,
+            mentorado: {
+                id: mentorado.id,
+                nome_completo: mentorado.nome_completo,
+                email: mentorado.email,
+                telefone: mentorado.telefone,
+                estado_entrada: mentorado.estado_entrada,
+                estado_atual: mentorado.estado_atual,
+                data_entrada: mentorado.data_entrada,
+                data_nascimento: mentorado.data_nascimento,
+                endereco: mentorado.endereco,
+                crm: mentorado.crm,
+                cpf: mentorado.cpf,
+                rg: mentorado.rg,
+                origem_conhecimento: mentorado.origem_conhecimento,
+                data_inicio_mentoria: mentorado.data_inicio_mentoria,
+                status_login: mentorado.status_login,
+                genero: mentorado.genero,
+                especialidade: mentorado.especialidade,
+                organization_id: mentorado.organization_id,
+                created_at: mentorado.created_at,
+                turma: mentorado.turma,
+            }
+        });
+    } catch (err) {
+        console.error('❌ Mentorado validate error:', err);
+        return res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+});
+
+// POST /public/mentorados/query - public query for mentorados table (read-only)
+app.post('/public/mentorados/query', async (req, res) => {
+    try {
+        const { operation, select, filters, order, single, maybeSingle, limit: queryLimit, range } = req.body;
+
+        // Only allow SELECT operations on mentorados table
+        if (operation && operation !== 'select') {
+            return res.status(403).json({ error: 'Only SELECT operations allowed on public endpoint' });
+        }
+
+        // Build SELECT query
+        const columns = select || '*';
+        let sql = `SELECT ${columns} FROM mentorados`;
+        const params = [];
+        let paramIdx = 1;
+
+        // Apply filters
+        if (filters && filters.length > 0) {
+            const whereClauses = [];
+            for (const f of filters) {
+                if (f.type === 'eq') {
+                    whereClauses.push(`${f.column} = $${paramIdx++}`);
+                    params.push(f.value);
+                } else if (f.type === 'ilike') {
+                    whereClauses.push(`${f.column} ILIKE $${paramIdx++}`);
+                    params.push(f.value);
+                } else if (f.type === 'in') {
+                    const placeholders = f.value.map(() => `$${paramIdx++}`).join(', ');
+                    whereClauses.push(`${f.column} IN (${placeholders})`);
+                    params.push(...f.value);
+                } else if (f.type === 'is') {
+                    if (f.value === null) {
+                        whereClauses.push(`${f.column} IS NULL`);
+                    } else {
+                        whereClauses.push(`${f.column} IS $${paramIdx++}`);
+                        params.push(f.value);
+                    }
+                }
+            }
+            if (whereClauses.length > 0) {
+                sql += ` WHERE ${whereClauses.join(' AND ')}`;
+            }
+        }
+
+        // Apply order
+        if (order && order.length > 0) {
+            const orderClauses = order.map(o => `${o.column} ${o.ascending ? 'ASC' : 'DESC'}`);
+            sql += ` ORDER BY ${orderClauses.join(', ')}`;
+        }
+
+        // Apply limit
+        if (queryLimit) {
+            sql += ` LIMIT ${parseInt(queryLimit)}`;
+        }
+
+        if (single || maybeSingle) {
+            sql += ' LIMIT 1';
+        }
+
+        const result = await supabase.query(sql, params);
+
+        if (single) {
+            if (result.rows.length === 0) {
+                return res.json({ data: null, error: { message: 'Row not found', code: 'PGRST116' } });
+            }
+            return res.json({ data: result.rows[0], error: null });
+        }
+
+        if (maybeSingle) {
+            return res.json({ data: result.rows[0] || null, error: null });
+        }
+
+        return res.json({ data: result.rows, error: null, count: result.rowCount });
+    } catch (err) {
+        console.error('❌ Public mentorado query error:', err);
+        return res.status(500).json({ data: null, error: { message: err.message } });
+    }
+});
+
 // SERVIDOR HTTP SIMPLES
 app.listen(port, () => {
     console.log(`🚀 WhatsApp API rodando em HTTP na porta ${port}`);

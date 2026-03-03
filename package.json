@@ -19,6 +19,7 @@
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.3",
     "node-cron": "^4.2.1",
+    "bcryptjs": "^2.4.3",
     "pdf-lib": "^1.17.1",
     "pg": "^8.19.0",
     "puppeteer": "^24.25.0",
