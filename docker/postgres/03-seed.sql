@@ -5,7 +5,7 @@
 -- 1. Create organization
 INSERT INTO organizations (id, name, owner_email, admin_phone)
 VALUES (
-    'a0000000-0000-4000-8000-000000000001',
+    '9c8c0033-15ea-4e33-a55f-28d81a19693b',
     'Médicos de resultados',
     'gabrielslmaia@hotmail.com',
     NULL
@@ -19,7 +19,7 @@ VALUES (
     'b0000000-0000-4000-8000-000000000001',
     'c0000000-0000-4000-8000-000000000001',
     'Emerson',
-    'a0000000-0000-4000-8000-000000000001',
+    '9c8c0033-15ea-4e33-a55f-28d81a19693b',
     'admin'
 )
 ON CONFLICT (id) DO NOTHING;
@@ -30,7 +30,7 @@ VALUES (
     'b0000000-0000-4000-8000-000000000002',
     'c0000000-0000-4000-8000-000000000002',
     'Gabriel',
-    'a0000000-0000-4000-8000-000000000001',
+    '9c8c0033-15ea-4e33-a55f-28d81a19693b',
     'admin'
 )
 ON CONFLICT (id) DO NOTHING;
@@ -40,7 +40,7 @@ INSERT INTO organization_users (id, organization_id, user_id, email, role, is_ac
 VALUES
     (
         'd0000000-0000-4000-8000-000000000001',
-        'a0000000-0000-4000-8000-000000000001',
+        '9c8c0033-15ea-4e33-a55f-28d81a19693b',
         'c0000000-0000-4000-8000-000000000001',
         'emersonbljr2802@gmail.com',
         'owner',
@@ -48,7 +48,7 @@ VALUES
     ),
     (
         'd0000000-0000-4000-8000-000000000002',
-        'a0000000-0000-4000-8000-000000000001',
+        '9c8c0033-15ea-4e33-a55f-28d81a19693b',
         'c0000000-0000-4000-8000-000000000002',
         'gabrielslmaia@hotmail.com',
         'owner',
@@ -66,7 +66,7 @@ VALUES
         crypt('senha123', gen_salt('bf')),
         'admin',
         true,
-        'a0000000-0000-4000-8000-000000000001'
+        '9c8c0033-15ea-4e33-a55f-28d81a19693b'
     ),
     (
         'e0000000-0000-4000-8000-000000000002',
@@ -75,13 +75,13 @@ VALUES
         crypt('k5oetybr.', gen_salt('bf')),
         'admin',
         true,
-        'a0000000-0000-4000-8000-000000000001'
+        '9c8c0033-15ea-4e33-a55f-28d81a19693b'
     )
 ON CONFLICT (id) DO NOTHING;
 
 -- 5. Initialize default kanban board for the org
 SELECT initialize_default_kanban(
-    'a0000000-0000-4000-8000-000000000001',
+    '9c8c0033-15ea-4e33-a55f-28d81a19693b',
     'c0000000-0000-4000-8000-000000000001'
 );
 
