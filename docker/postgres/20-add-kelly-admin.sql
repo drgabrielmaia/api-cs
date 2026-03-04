@@ -12,7 +12,7 @@ INSERT INTO usuarios_financeiro (id, nome, email, senha_hash, role, ativo, organ
 VALUES (
     gen_random_uuid(),
     'Kelly',
-    'kellybsantos@icloud.com',
+    'kellybsantoss@icloud.com',
     crypt('kelly123', gen_salt('bf')),
     'admin',
     true,
@@ -23,17 +23,5 @@ ON CONFLICT (email) DO UPDATE SET
     role = 'admin',
     ativo = true,
     organization_id = '9c8c0033-15ea-4e33-a55f-28d81a19693b';
-
--- Also ensure she's in organization_users
-INSERT INTO organization_users (email, organization_id, role, is_active)
-VALUES (
-    'kellybsantos@icloud.com',
-    '9c8c0033-15ea-4e33-a55f-28d81a19693b',
-    'admin',
-    true
-)
-ON CONFLICT (email, organization_id) DO UPDATE SET
-    role = 'admin',
-    is_active = true;
 
 DO $$ BEGIN RAISE NOTICE 'Migration 20 complete — Kelly added as admin'; END $$;

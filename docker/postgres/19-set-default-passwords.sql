@@ -13,6 +13,6 @@ WHERE password_hash IS NULL;
 -- Set specific password for admin user
 UPDATE mentorados
 SET password_hash = 'kelly123'
-WHERE LOWER(email) = 'kellybsantos@icloud.com';
+WHERE LOWER(email) = 'kellybsantoss@icloud.com';
 
 DO $$ BEGIN RAISE NOTICE 'Migration 19 complete — default passwords set for all mentorados'; END $$;
