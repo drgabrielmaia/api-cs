@@ -1901,15 +1901,97 @@ const ALLOWED_TABLES = [
     'module_ratings', 'continue_watching', 'mentorado_metas',
     'mentorado_atividades', 'mentorado_evolucao_financeira',
     'goal_checkpoints', 'pontuacao_mentorados', 'ranking_mentorados',
-    'kanban_columns', 'kanban_tasks', 'commissions', 'withdrawals',
+    'kanban_columns', 'kanban_tasks', 'kanban_boards', 'commissions', 'withdrawals',
     'referrals', 'referral_links', 'social_sellers', 'lead_notes',
-    'whatsapp_conversations', 'icp_form_templates', 'icp_responses',
+    'whatsapp_conversations', 'whatsapp_messages', 'icp_form_templates', 'icp_responses',
     'form_responses', 'dores_desejos',
+    // Closers / Sales team
+    'closers', 'closers_vendas', 'closers_atividades', 'closers_metas', 'closers_dashboard_access',
+    // Events
+    'group_events', 'group_event_participants',
+    // Forms
+    'form_templates', 'form_submissions', 'formularios_respostas', 'formularios_analises',
+    // Financial
+    'dividas', 'historico_pagamentos',
+    // Contracts
+    'contract_templates', 'contracts', 'contract_signatures',
+    // Misc
+    'checkins', 'metas', 'nps_respostas', 'scoring_configurations',
+    'video_form_templates', 'video_form_responses',
 ];
 
 // Sanitize column names to prevent SQL injection
 function sanitizeColumn(col) {
     return col.replace(/[^a-zA-Z0-9_]/g, '');
+}
+
+// =====================================================================
+// RPC Endpoint — call PostgreSQL functions
+// =====================================================================
+const ALLOWED_RPC_FUNCTIONS = [
+    'get_event_statistics', 'calculate_closer_metrics', 'calculate_commission',
+    'process_referral_conversion', 'initialize_default_kanban', 'get_kanban_board_data',
+    'move_kanban_task', 'update_continue_watching', 'process_mentorado_churn',
+    'get_contracts_dashboard', 'add_event_participant', 'convert_event_participant',
+    'get_contract_content', 'get_contract_for_signing', 'sign_contract_simple',
+    'sign_contract', 'create_contract_from_template', 'create_default_contract_template',
+    'expire_old_contracts',
+];
+
+app.post('/api/rpc/:name', async (req, res) => {
+    try {
+        const { name } = req.params;
+        if (!ALLOWED_RPC_FUNCTIONS.includes(name)) {
+            return res.status(400).json({ data: null, error: { message: `Function '${name}' not allowed` } });
+        }
+
+        const params = req.body || {};
+        const paramNames = Object.keys(params);
+        const paramValues = Object.values(params);
+
+        let sql;
+        if (paramNames.length === 0) {
+            sql = `SELECT * FROM ${name}()`;
+        } else {
+            const namedParams = paramNames.map((n, i) => `${sanitizeColumn(n)} := $${i + 1}`).join(', ');
+            sql = `SELECT * FROM ${name}(${namedParams})`;
+        }
+
+        console.log(`[RPC] Calling ${name} with params:`, paramNames);
+        const result = await supabase.query(sql, paramValues);
+        return res.json({ data: result.rows, error: null });
+    } catch (err) {
+        console.error(`[RPC] Error calling ${req.params.name}:`, err.message);
+        return res.status(500).json({ data: null, error: { message: err.message, code: err.code } });
+    }
+});
+
+// =====================================================================
+// Helper: Parse Supabase-style select with JOINs
+// Pattern: "col1, col2, relatedTable:fkColumn(col3, col4)"
+// =====================================================================
+function parseSelectWithJoins(selectStr, baseTable) {
+    if (!selectStr || selectStr === '*') return { baseCols: '*', joins: [], hasJoins: false };
+
+    const joins = [];
+    // Match patterns like: tableName:fkColumn(col1, col2, col3)
+    const joinRegex = /(\w+):(\w+)\(([^)]+)\)/g;
+    let cleanSelect = selectStr;
+    let match;
+
+    while ((match = joinRegex.exec(selectStr)) !== null) {
+        const [fullMatch, joinTable, fkColumn, joinColsStr] = match;
+        if (!ALLOWED_TABLES.includes(joinTable)) continue; // Skip disallowed tables
+        const joinCols = joinColsStr.split(',').map(c => c.trim()).map(sanitizeColumn);
+        joins.push({ alias: joinTable, table: joinTable, fkColumn: sanitizeColumn(fkColumn), columns: joinCols });
+        cleanSelect = cleanSelect.replace(fullMatch, '');
+    }
+
+    // Clean up leftover commas
+    cleanSelect = cleanSelect.replace(/,\s*,/g, ',').replace(/^\s*,/, '').replace(/,\s*$/, '').trim();
+    if (!cleanSelect) cleanSelect = '*';
+
+    return { baseCols: cleanSelect, joins, hasJoins: joins.length > 0 };
 }
 
 app.post('/api/query', async (req, res) => {
@@ -1974,13 +2056,17 @@ app.post('/api/query', async (req, res) => {
                     const parts = (f.value || '').split(',');
                     const orClauses = [];
                     for (const part of parts) {
-                        const m = part.match(/^(\w+)\.(eq|ilike|is|neq)\.(.+)$/);
+                        const m = part.match(/^(\w+)\.(eq|ilike|is|neq|gte|lte|gt|lt)\.(.+)$/);
                         if (m) {
                             const [, c, op, v] = m;
                             const sc = sanitizeColumn(c);
                             if (op === 'eq') { orClauses.push(`${sc} = $${paramIdx++}`); params.push(v); }
                             else if (op === 'neq') { orClauses.push(`${sc} != $${paramIdx++}`); params.push(v); }
                             else if (op === 'ilike') { orClauses.push(`${sc} ILIKE $${paramIdx++}`); params.push(v); }
+                            else if (op === 'gte') { orClauses.push(`${sc} >= $${paramIdx++}`); params.push(v); }
+                            else if (op === 'lte') { orClauses.push(`${sc} <= $${paramIdx++}`); params.push(v); }
+                            else if (op === 'gt') { orClauses.push(`${sc} > $${paramIdx++}`); params.push(v); }
+                            else if (op === 'lt') { orClauses.push(`${sc} < $${paramIdx++}`); params.push(v); }
                             else if (op === 'is' && v === 'null') { orClauses.push(`${sc} IS NULL`); }
                         }
                     }
@@ -2009,27 +2095,53 @@ app.post('/api/query', async (req, res) => {
         let result;
 
         if (operation === 'select' || !operation) {
-            // SELECT
+            // SELECT — with Supabase-style JOIN support
             const columns = select || '*';
-            // Handle simple join syntax like "col1, col2, related_table(col3, col4)"
-            // For now, just use columns as-is for simple selects
-            let sql = `SELECT ${columns} FROM ${table}`;
-            sql += buildWhere();
+            const { baseCols, joins, hasJoins } = parseSelectWithJoins(columns, table);
+
+            // Build WHERE clause once (captures params)
+            const whereClause = buildWhere();
+            const whereParams = [...params]; // snapshot for reuse
+
+            let sql;
+            if (!hasJoins) {
+                sql = `SELECT ${baseCols} FROM ${table}`;
+            } else {
+                // Build SELECT with JOINs
+                let selectParts;
+                if (baseCols === '*') {
+                    selectParts = `${table}.*`;
+                } else {
+                    selectParts = baseCols.split(',').map(c => {
+                        const t = c.trim();
+                        if (!t) return null;
+                        return t.includes('.') ? t : `${table}.${sanitizeColumn(t)}`;
+                    }).filter(Boolean).join(', ');
+                }
+                // Add joined columns as JSON objects
+                for (const j of joins) {
+                    const jsonParts = j.columns.map(c => `'${c}', ${j.alias}.${c}`).join(', ');
+                    selectParts += `, CASE WHEN ${j.alias}.id IS NOT NULL THEN json_build_object(${jsonParts}) ELSE NULL END AS ${j.alias}`;
+                }
+                sql = `SELECT ${selectParts} FROM ${table}`;
+                for (const j of joins) {
+                    sql += ` LEFT JOIN ${j.table} AS ${j.alias} ON ${table}.${j.fkColumn} = ${j.alias}.id`;
+                }
+            }
+
+            sql += whereClause;
             sql += buildOrder();
             sql += buildOffset() || buildLimit();
 
-            // Count query
+            // Count query (reuse same WHERE params)
             let countResult = null;
             if (count) {
-                const countSql = `SELECT COUNT(*) as total FROM ${table}` + buildWhere();
-                // Need separate params for count since buildWhere mutates params
-                // Actually we already built params, so reuse
-                const cr = await supabase.query(countSql, params.slice(0, params.length));
+                const countSql = `SELECT COUNT(*) as total FROM ${table}${whereClause}`;
+                const cr = await supabase.query(countSql, whereParams);
                 countResult = parseInt(cr.rows[0]?.total || 0);
-                // Reset params for actual query
             }
 
-            result = await supabase.query(sql, params);
+            result = await supabase.query(sql, whereParams);
 
             if (single) {
                 if (result.rows.length === 0) {
@@ -2115,6 +2227,97 @@ app.post('/api/query', async (req, res) => {
     } catch (err) {
         console.error('❌ /api/query error:', err);
         return res.status(500).json({ data: null, error: { message: err.message, code: err.code } });
+    }
+});
+
+// =====================================================================
+// Leads paginated search endpoint
+// =====================================================================
+app.post('/api/leads/search', async (req, res) => {
+    try {
+        const { organization_id, search, status, origem, date_filter, custom_start, custom_end, page = 1, limit = 10 } = req.body;
+        if (!organization_id) return res.status(400).json({ data: null, error: { message: 'organization_id required' } });
+
+        const params = [organization_id];
+        let paramIdx = 2;
+        const conditions = ['organization_id = $1'];
+
+        if (status && status !== 'todos') {
+            conditions.push(`status = $${paramIdx++}`);
+            params.push(status);
+        }
+        if (origem && origem !== 'todas') {
+            conditions.push(`origem = $${paramIdx++}`);
+            params.push(origem);
+        }
+        if (search && search.trim()) {
+            const term = `%${search.trim()}%`;
+            conditions.push(`(nome_completo ILIKE $${paramIdx} OR email ILIKE $${paramIdx} OR telefone ILIKE $${paramIdx} OR empresa ILIKE $${paramIdx})`);
+            params.push(term);
+            paramIdx++;
+        }
+
+        // Date filtering
+        if (date_filter && date_filter !== 'todos') {
+            const now = new Date();
+            let startDate, endDate;
+
+            if (date_filter === 'mes_atual') {
+                startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+                endDate = now;
+            } else if (date_filter === 'ano_atual') {
+                startDate = new Date(now.getFullYear(), 0, 1);
+                endDate = now;
+            } else if (date_filter === 'semana_atual') {
+                const day = now.getDay();
+                const diff = day === 0 ? 6 : day - 1;
+                startDate = new Date(now); startDate.setDate(now.getDate() - diff); startDate.setHours(0,0,0,0);
+                endDate = now;
+            } else if (date_filter === 'semana_passada') {
+                const day = now.getDay();
+                const diff = day === 0 ? 6 : day - 1;
+                const thisMonday = new Date(now); thisMonday.setDate(now.getDate() - diff); thisMonday.setHours(0,0,0,0);
+                startDate = new Date(thisMonday); startDate.setDate(thisMonday.getDate() - 7);
+                endDate = new Date(thisMonday); endDate.setSeconds(-1);
+            } else if (date_filter === 'mes_passado') {
+                startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                endDate = new Date(now.getFullYear(), now.getMonth(), 0); endDate.setHours(23,59,59,999);
+            } else if (date_filter === 'personalizado' && custom_start && custom_end) {
+                startDate = new Date(custom_start);
+                endDate = new Date(custom_end); endDate.setHours(23,59,59,999);
+            }
+
+            if (startDate && endDate) {
+                conditions.push(`created_at >= $${paramIdx++}`);
+                params.push(startDate.toISOString());
+                conditions.push(`created_at <= $${paramIdx++}`);
+                params.push(endDate.toISOString());
+            }
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        const offset = (parseInt(page) - 1) * parseInt(limit);
+
+        // Count total
+        const countSql = `SELECT COUNT(*) as total FROM leads ${whereClause}`;
+        const countResult = await supabase.query(countSql, params);
+        const total = parseInt(countResult.rows[0]?.total || 0);
+
+        // Fetch page
+        const dataSql = `SELECT * FROM leads ${whereClause} ORDER BY created_at DESC LIMIT ${parseInt(limit)} OFFSET ${offset}`;
+        const dataResult = await supabase.query(dataSql, params);
+
+        return res.json({
+            data: dataResult.rows,
+            count: total,
+            page: parseInt(page),
+            limit: parseInt(limit),
+            totalPages: Math.ceil(total / parseInt(limit)),
+            error: null
+        });
+    } catch (err) {
+        console.error('❌ /api/leads/search error:', err);
+        return res.status(500).json({ data: null, error: { message: err.message }, count: 0 });
     }
 });
 
