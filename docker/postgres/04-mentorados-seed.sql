@@ -193,7 +193,10 @@ VALUES
   ('Ana Clara Carvalho Costa', 'anaclaracc@me.com', '(67) 99999-7567', '040.060.061-79', 'Avenida Doutor Paulo Adolfo Bernard, 40, Vivendas do Parque, Campo Grande, MS, 79044-140', 'a0000000-0000-4000-8000-000000000001', 'ativo', 'ativo', 'ativo'),
   ('Ana Carolina Vieira Cançado Bispo', 'anacarolcancado@gmail.com', '(61) 98115-5538', '022.767.651-35', 'Quadra 204, 7, Sul (Águas Claras), Brasília, DF, 71939-540', 'a0000000-0000-4000-8000-000000000001', 'ativo', 'ativo', 'ativo'),
   ('Laura Rodrigues Silva', 'dra.laurars@gmail.com', '(33) 99908-7672', '099.143.916-30', 'Rua João Monlevade, 821, Cidade Nobre, Ipatinga, MG, 35162-378', 'a0000000-0000-4000-8000-000000000001', 'ativo', 'ativo', 'ativo'),
-  ('Samarone Torres Volpato', 'stvolpato@gmail.com', '(48) 99622-3223', '057.721.759-39', 'Rua Alcides Domingues, 87, Praia Comprida, São José, SC, 88103-320', 'a0000000-0000-4000-8000-000000000001', 'ativo', 'ativo', 'ativo')
+  ('Samarone Torres Volpato', 'stvolpato@gmail.com', '(48) 99622-3223', '057.721.759-39', 'Rua Alcides Domingues, 87, Praia Comprida, São José, SC, 88103-320', 'a0000000-0000-4000-8000-000000000001', 'ativo', 'ativo', 'ativo'),
+  ('Thais de Oliveira Palmieri', 'thaispalmieri93@hotmail.com', '(67) 99205-4242', '04.266.628-45', 'Avenida Paulista, 767, Jardim Nhanhá, Campo Grande, MS, 79081-010', 'a0000000-0000-4000-8000-000000000001', 'ativo', 'ativo', 'ativo'),
+  ('Leonardo da Silva Barros', 'lsbarros1@hotmail.com', '(86) 99427-2245', '600.172.173-42', 'Avenida Aviador Rossini Morada Luna, 38000, Morros, Teresina, PI, 64062-200', 'a0000000-0000-4000-8000-000000000001', 'ativo', 'ativo', 'ativo'),
+  ('Angélica Celestina de Sena Carvalho', 'angelicacelestina@hotmail.com', '(74) 99979-6985', '780.167.035-34', 'Rua Artur Diniz Veloso, 385, Estação, Jacobina, BA, 44703-172', 'a0000000-0000-4000-8000-000000000001', 'ativo', 'ativo', 'ativo')
 ON CONFLICT (email) DO UPDATE SET
   organization_id = EXCLUDED.organization_id,
   nome_completo = EXCLUDED.nome_completo,
