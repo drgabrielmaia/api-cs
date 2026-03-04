@@ -1890,6 +1890,234 @@ app.post('/public/mentorados/query', async (req, res) => {
     }
 });
 
+// =====================================================================
+// Generic /api/query — used by ApiQueryBuilder on the frontend
+// Supports: select, insert, update, delete, upsert
+// =====================================================================
+const ALLOWED_TABLES = [
+    'mentorados', 'leads', 'organizations', 'organization_users',
+    'profiles', 'usuarios_financeiro', 'calendar_events', 'notifications',
+    'video_modules', 'video_lessons', 'video_progress', 'video_ratings',
+    'module_ratings', 'continue_watching', 'mentorado_metas',
+    'mentorado_atividades', 'mentorado_evolucao_financeira',
+    'goal_checkpoints', 'pontuacao_mentorados', 'ranking_mentorados',
+    'kanban_columns', 'kanban_tasks', 'commissions', 'withdrawals',
+    'referrals', 'referral_links', 'social_sellers', 'lead_notes',
+    'whatsapp_conversations', 'icp_form_templates', 'icp_responses',
+    'form_responses', 'dores_desejos',
+];
+
+// Sanitize column names to prevent SQL injection
+function sanitizeColumn(col) {
+    return col.replace(/[^a-zA-Z0-9_]/g, '');
+}
+
+app.post('/api/query', async (req, res) => {
+    try {
+        const { table, operation, select, filters, order, single, maybeSingle,
+                limit: queryLimit, range, data, onConflict, returning, count } = req.body;
+
+        if (!table || !ALLOWED_TABLES.includes(table)) {
+            return res.status(400).json({ data: null, error: { message: `Table '${table}' not allowed` } });
+        }
+
+        const params = [];
+        let paramIdx = 1;
+
+        // Build WHERE clause from filters
+        function buildWhere() {
+            if (!filters || filters.length === 0) return '';
+            const clauses = [];
+            for (const f of filters) {
+                const col = sanitizeColumn(f.column || '');
+                if (f.type === 'eq') {
+                    clauses.push(`${col} = $${paramIdx++}`);
+                    params.push(f.value);
+                } else if (f.type === 'neq') {
+                    clauses.push(`${col} != $${paramIdx++}`);
+                    params.push(f.value);
+                } else if (f.type === 'gt') {
+                    clauses.push(`${col} > $${paramIdx++}`);
+                    params.push(f.value);
+                } else if (f.type === 'gte') {
+                    clauses.push(`${col} >= $${paramIdx++}`);
+                    params.push(f.value);
+                } else if (f.type === 'lt') {
+                    clauses.push(`${col} < $${paramIdx++}`);
+                    params.push(f.value);
+                } else if (f.type === 'lte') {
+                    clauses.push(`${col} <= $${paramIdx++}`);
+                    params.push(f.value);
+                } else if (f.type === 'in') {
+                    const ph = f.value.map(() => `$${paramIdx++}`).join(', ');
+                    clauses.push(`${col} IN (${ph})`);
+                    params.push(...f.value);
+                } else if (f.type === 'is') {
+                    if (f.value === null) clauses.push(`${col} IS NULL`);
+                    else clauses.push(`${col} IS $${paramIdx++}`) && params.push(f.value);
+                } else if (f.type === 'not') {
+                    if (f.op === 'is' && f.value === null) clauses.push(`${col} IS NOT NULL`);
+                    else if (f.op === 'eq') { clauses.push(`${col} != $${paramIdx++}`); params.push(f.value); }
+                    else if (f.op === 'in') {
+                        const ph = f.value.map(() => `$${paramIdx++}`).join(', ');
+                        clauses.push(`${col} NOT IN (${ph})`);
+                        params.push(...f.value);
+                    }
+                } else if (f.type === 'ilike') {
+                    clauses.push(`${col} ILIKE $${paramIdx++}`);
+                    params.push(f.value);
+                } else if (f.type === 'like') {
+                    clauses.push(`${col} LIKE $${paramIdx++}`);
+                    params.push(f.value);
+                } else if (f.type === 'or') {
+                    // Parse simple or conditions like "col1.eq.val1,col2.eq.val2"
+                    const parts = (f.value || '').split(',');
+                    const orClauses = [];
+                    for (const part of parts) {
+                        const m = part.match(/^(\w+)\.(eq|ilike|is|neq)\.(.+)$/);
+                        if (m) {
+                            const [, c, op, v] = m;
+                            const sc = sanitizeColumn(c);
+                            if (op === 'eq') { orClauses.push(`${sc} = $${paramIdx++}`); params.push(v); }
+                            else if (op === 'neq') { orClauses.push(`${sc} != $${paramIdx++}`); params.push(v); }
+                            else if (op === 'ilike') { orClauses.push(`${sc} ILIKE $${paramIdx++}`); params.push(v); }
+                            else if (op === 'is' && v === 'null') { orClauses.push(`${sc} IS NULL`); }
+                        }
+                    }
+                    if (orClauses.length > 0) clauses.push(`(${orClauses.join(' OR ')})`);
+                }
+            }
+            return clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : '';
+        }
+
+        function buildOrder() {
+            if (!order || order.length === 0) return '';
+            return ' ORDER BY ' + order.map(o => `${sanitizeColumn(o.column)} ${o.ascending ? 'ASC' : 'DESC'}`).join(', ');
+        }
+
+        function buildLimit() {
+            if (single || maybeSingle) return ' LIMIT 1';
+            if (queryLimit) return ` LIMIT ${parseInt(queryLimit)}`;
+            return '';
+        }
+
+        function buildOffset() {
+            if (range) return ` OFFSET ${parseInt(range.from)} LIMIT ${parseInt(range.to) - parseInt(range.from) + 1}`;
+            return '';
+        }
+
+        let result;
+
+        if (operation === 'select' || !operation) {
+            // SELECT
+            const columns = select || '*';
+            // Handle simple join syntax like "col1, col2, related_table(col3, col4)"
+            // For now, just use columns as-is for simple selects
+            let sql = `SELECT ${columns} FROM ${table}`;
+            sql += buildWhere();
+            sql += buildOrder();
+            sql += buildOffset() || buildLimit();
+
+            // Count query
+            let countResult = null;
+            if (count) {
+                const countSql = `SELECT COUNT(*) as total FROM ${table}` + buildWhere();
+                // Need separate params for count since buildWhere mutates params
+                // Actually we already built params, so reuse
+                const cr = await supabase.query(countSql, params.slice(0, params.length));
+                countResult = parseInt(cr.rows[0]?.total || 0);
+                // Reset params for actual query
+            }
+
+            result = await supabase.query(sql, params);
+
+            if (single) {
+                if (result.rows.length === 0) {
+                    return res.json({ data: null, error: { message: 'Row not found', code: 'PGRST116' }, count: countResult });
+                }
+                return res.json({ data: result.rows[0], error: null, count: countResult });
+            }
+            if (maybeSingle) {
+                return res.json({ data: result.rows[0] || null, error: null, count: countResult });
+            }
+            return res.json({ data: result.rows, error: null, count: countResult ?? result.rowCount });
+
+        } else if (operation === 'insert') {
+            const rows = Array.isArray(data) ? data : [data];
+            if (rows.length === 0) return res.json({ data: [], error: null });
+
+            const cols = Object.keys(rows[0]).map(sanitizeColumn);
+            const valueSets = [];
+            for (const row of rows) {
+                const vals = cols.map(c => { params.push(row[c]); return `$${paramIdx++}`; });
+                valueSets.push(`(${vals.join(', ')})`);
+            }
+
+            let sql = `INSERT INTO ${table} (${cols.join(', ')}) VALUES ${valueSets.join(', ')}`;
+            if (onConflict) {
+                sql += ` ON CONFLICT (${sanitizeColumn(onConflict)}) DO NOTHING`;
+            }
+            if (returning) sql += ' RETURNING *';
+
+            result = await supabase.query(sql, params);
+            return res.json({ data: returning ? result.rows : null, error: null, count: result.rowCount });
+
+        } else if (operation === 'update') {
+            if (!data || typeof data !== 'object') {
+                return res.status(400).json({ data: null, error: { message: 'No data provided for update' } });
+            }
+
+            const setClauses = [];
+            for (const [key, value] of Object.entries(data)) {
+                setClauses.push(`${sanitizeColumn(key)} = $${paramIdx++}`);
+                params.push(value);
+            }
+
+            let sql = `UPDATE ${table} SET ${setClauses.join(', ')}`;
+            sql += buildWhere();
+            if (returning) sql += ' RETURNING *';
+
+            result = await supabase.query(sql, params);
+            return res.json({ data: returning ? result.rows : null, error: null, count: result.rowCount });
+
+        } else if (operation === 'delete') {
+            let sql = `DELETE FROM ${table}`;
+            sql += buildWhere();
+            if (returning) sql += ' RETURNING *';
+
+            result = await supabase.query(sql, params);
+            return res.json({ data: returning ? result.rows : null, error: null, count: result.rowCount });
+
+        } else if (operation === 'upsert') {
+            const rows = Array.isArray(data) ? data : [data];
+            if (rows.length === 0) return res.json({ data: [], error: null });
+
+            const cols = Object.keys(rows[0]).map(sanitizeColumn);
+            const valueSets = [];
+            for (const row of rows) {
+                const vals = cols.map(c => { params.push(row[c]); return `$${paramIdx++}`; });
+                valueSets.push(`(${vals.join(', ')})`);
+            }
+
+            const conflictCol = onConflict || 'id';
+            const updateCols = cols.filter(c => c !== conflictCol).map(c => `${c} = EXCLUDED.${c}`).join(', ');
+
+            let sql = `INSERT INTO ${table} (${cols.join(', ')}) VALUES ${valueSets.join(', ')}`;
+            sql += ` ON CONFLICT (${sanitizeColumn(conflictCol)}) DO UPDATE SET ${updateCols}`;
+            if (returning) sql += ' RETURNING *';
+
+            result = await supabase.query(sql, params);
+            return res.json({ data: returning ? result.rows : null, error: null, count: result.rowCount });
+
+        } else {
+            return res.status(400).json({ data: null, error: { message: `Unknown operation: ${operation}` } });
+        }
+    } catch (err) {
+        console.error('❌ /api/query error:', err);
+        return res.status(500).json({ data: null, error: { message: err.message, code: err.code } });
+    }
+});
+
 // SERVIDOR HTTP SIMPLES
 app.listen(port, () => {
     console.log(`🚀 WhatsApp API rodando em HTTP na porta ${port}`);
