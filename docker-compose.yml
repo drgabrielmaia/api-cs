@@ -29,6 +29,8 @@ services:
       - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
       - ./docker/postgres/01-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
       - ./docker/postgres/03-seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+      - ./docker/postgres/06-all-functions.sql:/docker-entrypoint-initdb.d/03-functions.sql:ro
+      - ./docker/postgres/13-supabase-full-seed.sql:/docker-entrypoint-initdb.d/04-supabase-seed.sql:ro
     command: postgres -c config_file=/etc/postgresql/postgresql.conf
     networks:
       - internal
