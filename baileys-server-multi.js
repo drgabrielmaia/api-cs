@@ -568,6 +568,19 @@ app.post('/api/query', (req, res, next) => {
         if (maybeSingle) qb = qb.maybeSingle();
 
         const result = await qb;
+
+        // Auto-notification hook: send WhatsApp group message on insert
+        if ((operation === 'insert') && result.data && !result.error) {
+            if (table === 'video_lessons' || table === 'group_events') {
+                // Fire-and-forget to not block response
+                setImmediate(() => {
+                    handlePostInsertNotification(table, result.data).catch(err => {
+                        console.error('❌ Post-insert notification error:', err.message);
+                    });
+                });
+            }
+        }
+
         const errorOut = result.error
             ? { message: result.error.message || String(result.error), code: result.error.code || undefined }
             : null;
@@ -663,11 +676,144 @@ app.post('/api/whatsapp/send-group', async (req, res) => {
     }
 });
 
+// Configure which WhatsApp group receives auto-notifications for an organization
+app.post('/api/whatsapp/configure-group', async (req, res) => {
+    const { organizationId, groupId } = req.body;
+    const orgId = organizationId || '9c8c0033-15ea-4e33-a55f-28d81a19693b';
+
+    if (!groupId) {
+        return res.json({ success: false, error: 'groupId é obrigatório' });
+    }
+
+    try {
+        await supabase.query(
+            `UPDATE organizations SET whatsapp_group_jid = $1 WHERE id = $2`,
+            [groupId, orgId]
+        );
+        console.log(`✅ Grupo WhatsApp configurado para org ${orgId}: ${groupId}`);
+        res.json({ success: true, message: 'Grupo configurado com sucesso', groupId });
+    } catch (error) {
+        console.error('Erro ao configurar grupo:', error);
+        res.json({ success: false, error: error.message });
+    }
+});
+
+// Get current configured group for an organization
+app.get('/api/whatsapp/configured-group', async (req, res) => {
+    const orgId = req.query.organizationId || '9c8c0033-15ea-4e33-a55f-28d81a19693b';
+    try {
+        const result = await supabase.query(
+            `SELECT whatsapp_group_jid FROM organizations WHERE id = $1 LIMIT 1`,
+            [orgId]
+        );
+        const jid = result.rows?.[0]?.whatsapp_group_jid || null;
+        res.json({ success: true, groupId: jid });
+    } catch (error) {
+        res.json({ success: false, error: error.message });
+    }
+});
+
 // Função para obter número do admin baseado na organização
 const getAdminPhone = async (organizationId = 'default') => {
   return await settingsManager.getAdminPhone(organizationId);
 };
 const defaultUserId = 'default'; // Usuário padrão para notificações
+
+// =====================================================================
+// Auto-notification: send WhatsApp group message on insert
+// =====================================================================
+const DEFAULT_ORG_ID = '9c8c0033-15ea-4e33-a55f-28d81a19693b';
+
+async function getOrgWhatsAppGroupJid(orgId) {
+    try {
+        const result = await supabase.query(
+            `SELECT whatsapp_group_jid FROM organizations WHERE id = $1 LIMIT 1`,
+            [orgId]
+        );
+        return result.rows?.[0]?.whatsapp_group_jid || null;
+    } catch (err) {
+        console.error('❌ Erro ao buscar group JID:', err.message);
+        return null;
+    }
+}
+
+async function sendGroupNotification(orgId, message) {
+    try {
+        const groupJid = await getOrgWhatsAppGroupJid(orgId);
+        if (!groupJid) {
+            console.log(`⚠️ Org ${orgId} não tem grupo WhatsApp configurado`);
+            return false;
+        }
+
+        // Try org-specific session first, then default
+        let session = userSessions.get(orgId);
+        if (!session?.sock || !session.isReady) {
+            session = userSessions.get(defaultUserId);
+        }
+        if (!session?.sock || !session.isReady) {
+            console.log('⚠️ Nenhuma sessão WhatsApp conectada para enviar notificação');
+            return false;
+        }
+
+        await session.sock.sendMessage(groupJid, { text: message });
+        console.log(`✅ Notificação enviada para grupo: ${groupJid}`);
+        return true;
+    } catch (err) {
+        console.error('❌ Erro ao enviar notificação para grupo:', err.message);
+        return false;
+    }
+}
+
+function formatDate(dateStr) {
+    try {
+        const d = new Date(dateStr);
+        return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
+    } catch { return dateStr; }
+}
+
+async function handlePostInsertNotification(table, insertedData) {
+    const rows = Array.isArray(insertedData) ? insertedData : [insertedData];
+
+    for (const row of rows) {
+        const orgId = row.organization_id || DEFAULT_ORG_ID;
+        let message = null;
+
+        if (table === 'video_lessons') {
+            // Buscar nome do módulo
+            let moduleName = '';
+            if (row.module_id) {
+                try {
+                    const modResult = await supabase.query(
+                        `SELECT title FROM video_modules WHERE id = $1 LIMIT 1`,
+                        [row.module_id]
+                    );
+                    moduleName = modResult.rows?.[0]?.title || '';
+                } catch {}
+            }
+            message = `📚 *Nova aula disponível!*\n\n` +
+                `📖 *${row.title || 'Nova aula'}*\n` +
+                (moduleName ? `📁 Módulo: ${moduleName}\n` : '') +
+                (row.description ? `\n${row.description}\n` : '') +
+                `\n🔗 Acesse o portal para assistir: cs.medicosderesultado.com.br/mentorado/videos`;
+
+        } else if (table === 'group_events') {
+            const isPaid = row.is_paid && row.valor_ingresso > 0;
+            message = `🎯 *Novo evento agendado!*\n\n` +
+                `📌 *${row.name || 'Novo evento'}*\n` +
+                (row.date_time ? `📅 Data: ${formatDate(row.date_time)}\n` : '') +
+                (row.local_evento ? `📍 Local: ${row.local_evento}\n` : '') +
+                (row.meeting_link ? `🔗 Link: ${row.meeting_link}\n` : '') +
+                (isPaid ? `💰 Ingresso: R$ ${parseFloat(row.valor_ingresso).toFixed(2)}\n` : '') +
+                (row.max_participants ? `👥 Vagas: ${row.max_participants}\n` : '') +
+                (row.description ? `\n${row.description}\n` : '') +
+                `\n🔗 Confira no portal: cs.medicosderesultado.com.br/mentorado/eventos`;
+        }
+
+        if (message) {
+            await sendGroupNotification(orgId, message);
+        }
+    }
+}
 
 // === FUNÇÕES PARA ENVIO MULTI-ORGANIZACIONAL ===
 
