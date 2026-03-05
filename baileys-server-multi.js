@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
 const crypto = require('crypto');
+const multer = require('multer');
 // PostgreSQL direct connection (replaces @supabase/supabase-js)
 // db.js provides supabase-compatible .from().select().eq() API
 const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -229,6 +230,26 @@ app.use('/instagram-webhook', express.raw({
 }));
 
 app.use(express.json());
+
+// File upload configuration (multer)
+const uploadDir = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+const uploadStorage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, uploadDir),
+    filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname);
+        cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
+    }
+});
+const fileUpload = multer({
+    storage: uploadStorage,
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+    fileFilter: (req, file, cb) => {
+        const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+        cb(null, allowed.includes(file.mimetype));
+    }
+});
+app.use('/uploads', express.static(uploadDir));
 
 // Multi-user WhatsApp sessions storage
 const userSessions = new Map(); // userId -> session data
@@ -582,6 +603,63 @@ app.post('/api/rpc/:name', authMiddleware, async (req, res) => {
     } catch (err) {
         console.error(`❌ /api/rpc/${req.params.name} error:`, err.message);
         res.status(400).json({ data: null, error: { message: err.message } });
+    }
+});
+
+// =====================================================================
+// POST /api/upload - File upload endpoint
+// =====================================================================
+app.post('/api/upload', fileUpload.single('file'), (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'Nenhum arquivo enviado ou formato não permitido' });
+    }
+    const baseUrl = process.env.API_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const url = `${baseUrl}/uploads/${req.file.filename}`;
+    res.json({ success: true, url, filename: req.file.filename, size: req.file.size });
+});
+
+// =====================================================================
+// WhatsApp Group endpoints (Baileys multi-session)
+// =====================================================================
+app.get('/api/whatsapp/groups', async (req, res) => {
+    const userId = req.query.userId || 'default';
+    const session = userSessions.get(userId);
+    if (!session || !session.sock) {
+        return res.json({ success: false, error: 'WhatsApp não está conectado' });
+    }
+    try {
+        const groups = await session.sock.groupFetchAllParticipating();
+        const groupList = Object.values(groups).map(g => ({
+            id: g.id,
+            name: g.subject,
+            participants: g.participants?.length || 0,
+        }));
+        res.json({ success: true, groups: groupList });
+    } catch (error) {
+        console.error('Erro ao listar grupos:', error);
+        res.json({ success: false, error: error.message });
+    }
+});
+
+app.post('/api/whatsapp/send-group', async (req, res) => {
+    const { groupId, message, userId } = req.body;
+    const sessionId = userId || 'default';
+    const session = userSessions.get(sessionId);
+
+    if (!session || !session.sock) {
+        return res.json({ success: false, error: 'WhatsApp não está conectado' });
+    }
+    if (!groupId || !message) {
+        return res.json({ success: false, error: 'groupId e message são obrigatórios' });
+    }
+
+    try {
+        await session.sock.sendMessage(groupId, { text: message });
+        console.log(`✅ Mensagem enviada para grupo: ${groupId}`);
+        res.json({ success: true, message: 'Mensagem enviada ao grupo' });
+    } catch (error) {
+        console.error('Erro ao enviar para grupo:', error);
+        res.json({ success: false, error: error.message });
     }
 });
 
@@ -4055,9 +4133,20 @@ function setupCronJobs() {
         checkAndSendNotifications(true);
     });
 
+    // Cleanup expired community stories every 6 hours
+    cron.schedule('0 */6 * * *', async () => {
+        try {
+            await supabase.query(`SELECT cleanup_expired_stories()`);
+            console.log('🧹 Cleaned up expired community stories');
+        } catch (err) {
+            console.error('❌ Story cleanup error:', err.message);
+        }
+    });
+
     console.log('⏰ Cron jobs configurados:');
     console.log('   - Verificação de lembretes a cada 2 minutos (30min antes)');
     console.log('   - Resumo diário às 7h UTC (10h São Paulo)');
+    console.log('   - Cleanup de stories expirados a cada 6 horas');
 
     // 🧪 TESTE IMEDIATO DO RESUMO DIÁRIO
     console.log('🧪 EXECUTANDO TESTE IMEDIATO DO RESUMO DIÁRIO...');
@@ -5839,6 +5928,10 @@ app.post('/public/mentorados/login', async (req, res) => {
                 organization_id: mentorado.organization_id,
                 created_at: mentorado.created_at,
                 turma: mentorado.turma,
+                icp_completed: mentorado.icp_completed || false,
+                icp_response_id: mentorado.icp_response_id,
+                avatar_url: mentorado.avatar_url,
+                pontuacao_total: mentorado.pontuacao_total || 0,
             }
         });
     } catch (err) {
@@ -5904,6 +5997,10 @@ app.get('/public/mentorados/validate/:id', async (req, res) => {
                 organization_id: mentorado.organization_id,
                 created_at: mentorado.created_at,
                 turma: mentorado.turma,
+                icp_completed: mentorado.icp_completed || false,
+                icp_response_id: mentorado.icp_response_id,
+                avatar_url: mentorado.avatar_url,
+                pontuacao_total: mentorado.pontuacao_total || 0,
             }
         });
     } catch (err) {
