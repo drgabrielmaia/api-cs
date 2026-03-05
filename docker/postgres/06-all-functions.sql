@@ -169,16 +169,37 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 8. Process mentorado churn
-CREATE OR REPLACE FUNCTION process_mentorado_churn(p_mentorado_id UUID, p_motivo TEXT DEFAULT NULL)
-RETURNS VOID AS $$
+CREATE OR REPLACE FUNCTION process_mentorado_churn(
+    p_mentorado_id UUID,
+    p_tipo_exclusao TEXT DEFAULT NULL,
+    p_motivo TEXT DEFAULT NULL,
+    p_excluido_por_email TEXT DEFAULT NULL,
+    p_organization_id UUID DEFAULT NULL
+)
+RETURNS TABLE(success BOOLEAN, message TEXT) AS $$
 BEGIN
     UPDATE mentorados
     SET estado_atual = 'churn',
         status_login = 'inativo',
-        motivo_exclusao = p_motivo,
+        motivo_exclusao = COALESCE(p_tipo_exclusao, p_motivo),
         data_exclusao = NOW(),
-        excluido = true
+        excluido = true,
+        updated_at = NOW()
     WHERE id = p_mentorado_id;
+
+    IF NOT FOUND THEN
+        RETURN QUERY SELECT false, 'Mentorado não encontrado'::text;
+        RETURN;
+    END IF;
+
+    BEGIN
+        INSERT INTO mentorado_churns (mentorado_id, tipo_exclusao, motivo, data_exclusao, excluido_por_email, organization_id)
+        VALUES (p_mentorado_id, p_tipo_exclusao, p_motivo, NOW(), p_excluido_por_email, p_organization_id);
+    EXCEPTION WHEN undefined_table THEN
+        NULL;
+    END;
+
+    RETURN QUERY SELECT true, 'Exclusão processada com sucesso'::text;
 END;
 $$ LANGUAGE plpgsql;
 

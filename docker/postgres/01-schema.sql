@@ -224,14 +224,34 @@ CREATE TABLE IF NOT EXISTS checkins (
     mentorado_id UUID NOT NULL REFERENCES mentorados(id) ON DELETE CASCADE,
     organization_id UUID REFERENCES organizations(id),
     tipo TEXT,
+    status TEXT DEFAULT 'pendente',
     respostas JSONB,
     nota_geral INTEGER,
     observacoes TEXT,
+    titulo TEXT,
+    descricao TEXT,
+    data_agendada TIMESTAMPTZ,
     data_checkin TIMESTAMPTZ DEFAULT NOW(),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX idx_checkins_mentorado ON checkins(mentorado_id);
+
+CREATE TABLE IF NOT EXISTS mentorado_churns (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    mentorado_id UUID NOT NULL REFERENCES mentorados(id) ON DELETE CASCADE,
+    tipo_exclusao TEXT,
+    motivo TEXT,
+    data_exclusao TIMESTAMPTZ DEFAULT NOW(),
+    valor_recuperado NUMERIC,
+    data_recuperacao TIMESTAMPTZ,
+    excluido_por_email TEXT,
+    organization_id UUID REFERENCES organizations(id),
+    metadata JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_mentorado_churns_mentorado ON mentorado_churns(mentorado_id);
 
 CREATE TABLE IF NOT EXISTS icp_form_templates (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
