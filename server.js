@@ -1918,6 +1918,10 @@ const ALLOWED_TABLES = [
     // Misc
     'checkins', 'metas', 'nps_respostas', 'scoring_configurations',
     'video_form_templates', 'video_form_responses',
+    // Airbnb para Medicos
+    'clinicas', 'clinica_reservas', 'clinica_avaliacoes', 'airbnb_config',
+    // Evento Tickets
+    'evento_tickets',
 ];
 
 // Sanitize column names to prevent SQL injection
