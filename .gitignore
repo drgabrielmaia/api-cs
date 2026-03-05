@@ -148,3 +148,6 @@ tokens/
 
 # Build outputs
 api/core/dist/
+
+# Claude Code
+.claude/
