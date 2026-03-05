@@ -8,6 +8,26 @@ const cron = require('node-cron');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const multer = require('multer');
+
+// File upload configuration
+const uploadDir = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+const uploadStorage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, uploadDir),
+    filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname);
+        cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
+    }
+});
+const fileUpload = multer({
+    storage: uploadStorage,
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+    fileFilter: (req, file, cb) => {
+        const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+        cb(null, allowed.includes(file.mimetype));
+    }
+});
 
 // Para desenvolvimento - aceitar certificados self-signed
 process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = 0;
@@ -22,6 +42,7 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning']
 }));
 app.use(express.json());
+app.use('/uploads', express.static(uploadDir));
 
 let client;
 let qrCodeData = null;
@@ -1100,6 +1121,47 @@ app.post('/verify-number', async (req, res) => {
     }
 });
 
+// WhatsApp Group endpoints
+app.get('/api/whatsapp/groups', async (req, res) => {
+    if (!isReady) {
+        return res.json({ success: false, error: 'WhatsApp não está conectado' });
+    }
+    try {
+        const chats = await client.getChats();
+        const groups = chats
+            .filter(chat => chat.isGroup)
+            .map(chat => ({
+                id: chat.id._serialized,
+                name: chat.name,
+                participants: chat.participants?.length || 0,
+            }));
+        res.json({ success: true, groups });
+    } catch (error) {
+        console.error('Erro ao listar grupos:', error);
+        res.json({ success: false, error: error.message });
+    }
+});
+
+app.post('/api/whatsapp/send-group', async (req, res) => {
+    const { groupId, message } = req.body;
+
+    if (!isReady) {
+        return res.json({ success: false, error: 'WhatsApp não está conectado' });
+    }
+    if (!groupId || !message) {
+        return res.json({ success: false, error: 'groupId e message são obrigatórios' });
+    }
+
+    try {
+        await client.sendMessage(groupId, message);
+        console.log(`✅ Mensagem enviada para grupo: ${groupId}`);
+        res.json({ success: true, message: 'Mensagem enviada ao grupo' });
+    } catch (error) {
+        console.error('Erro ao enviar para grupo:', error);
+        res.json({ success: false, error: error.message });
+    }
+});
+
 // Endpoint para registro de usuário padrão (compatibilidade com sistema anterior)
 app.post('/users/default/register', async (req, res) => {
     try {
@@ -1498,9 +1560,20 @@ function setupCronJobs() {
     // [DESATIVADO] Follow-ups agora são processados no baileys-server-multi.js
     // cron.schedule('*/15 * * * *', () => { processFollowupsAutomatically(); });
 
+    // Cleanup expired stories every 6 hours
+    cron.schedule('0 */6 * * *', async () => {
+        try {
+            await supabase.query(`SELECT cleanup_expired_stories()`);
+            console.log('🧹 Cleaned up expired community stories');
+        } catch (err) {
+            console.error('❌ Story cleanup error:', err.message);
+        }
+    });
+
     console.log('⏰ Cron jobs configurados:');
     console.log('   - Verificação de lembretes a cada 2 minutos (30min antes)');
     console.log('   - Resumo diário às 7h da manhã (horário de São Paulo)');
+    console.log('   - Cleanup de stories expirados a cada 6 horas');
 }
 
 // Endpoint para testar notificações manualmente
@@ -1737,6 +1810,10 @@ app.post('/public/mentorados/login', async (req, res) => {
                 organization_id: mentorado.organization_id,
                 created_at: mentorado.created_at,
                 turma: mentorado.turma,
+                icp_completed: mentorado.icp_completed || false,
+                icp_response_id: mentorado.icp_response_id,
+                avatar_url: mentorado.avatar_url,
+                pontuacao_total: mentorado.pontuacao_total || 0,
             }
         });
     } catch (err) {
@@ -1803,6 +1880,10 @@ app.get('/public/mentorados/validate/:id', async (req, res) => {
                 organization_id: mentorado.organization_id,
                 created_at: mentorado.created_at,
                 turma: mentorado.turma,
+                icp_completed: mentorado.icp_completed || false,
+                icp_response_id: mentorado.icp_response_id,
+                avatar_url: mentorado.avatar_url,
+                pontuacao_total: mentorado.pontuacao_total || 0,
             }
         });
     } catch (err) {
@@ -1891,6 +1972,18 @@ app.post('/public/mentorados/query', async (req, res) => {
 });
 
 // =====================================================================
+// File Upload Endpoint
+// =====================================================================
+app.post('/api/upload', fileUpload.single('file'), (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'Nenhum arquivo enviado ou formato não permitido' });
+    }
+    const baseUrl = process.env.API_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const url = `${baseUrl}/uploads/${req.file.filename}`;
+    res.json({ success: true, url, filename: req.file.filename, size: req.file.size });
+});
+
+// =====================================================================
 // Generic /api/query — used by ApiQueryBuilder on the frontend
 // Supports: select, insert, update, delete, upsert
 // =====================================================================
@@ -1922,6 +2015,12 @@ const ALLOWED_TABLES = [
     'clinicas', 'clinica_reservas', 'clinica_avaliacoes', 'airbnb_config',
     // Evento Tickets
     'evento_tickets',
+    // Evento Lista de Espera
+    'evento_lista_espera',
+    // Airbnb Chat
+    'clinica_mensagens',
+    // Comunidade/Feed
+    'community_posts', 'community_reactions', 'community_comments',
 ];
 
 // Sanitize column names to prevent SQL injection

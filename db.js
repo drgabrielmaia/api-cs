@@ -272,6 +272,29 @@ const FK_MAP = {
     categorias_financeiras: {
         organizations: { fk: 'organization_id', pk: 'id' },
     },
+    // Comunidade/Feed
+    community_posts: {
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+        organizations: { fk: 'organization_id', pk: 'id' },
+    },
+    community_reactions: {
+        community_posts: { fk: 'post_id', pk: 'id' },
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+    },
+    community_comments: {
+        community_posts: { fk: 'post_id', pk: 'id' },
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+    },
+    // Airbnb Chat
+    clinica_mensagens: {
+        clinicas: { fk: 'clinica_id', pk: 'id' },
+        mentorados: { fk: 'remetente_id', pk: 'id' },
+    },
+    // Evento Lista de Espera
+    evento_lista_espera: {
+        group_events: { fk: 'event_id', pk: 'id' },
+        mentorados: { fk: 'mentorado_id', pk: 'id' },
+    },
 };
 
 // =====================================================================

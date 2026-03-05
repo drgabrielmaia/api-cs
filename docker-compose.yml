@@ -75,6 +75,7 @@ services:
     volumes:
       - ./auth_info_baileys:/app/auth_info_baileys:rw
       - ./logs:/app/logs:rw
+      - ./uploads:/app/uploads:rw
     depends_on:
       postgres:
         condition: service_healthy
