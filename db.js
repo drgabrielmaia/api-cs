@@ -718,11 +718,20 @@ class QueryBuilder {
         return { sql, values: this._values };
     }
 
-    // Serialize plain objects/arrays to JSON strings for JSONB columns
+    // Serialize values for PostgreSQL
     _prepareValue(val) {
         if (val === null || val === undefined) return null;
         if (val instanceof Date) return val;
-        if (Array.isArray(val) || (typeof val === 'object' && val.constructor === Object)) {
+        if (Array.isArray(val)) {
+            // Arrays of primitives (strings/numbers) → PostgreSQL array literal for TEXT[] columns
+            if (val.length === 0) return '{}';
+            if (val.every(item => typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean')) {
+                return '{' + val.map(v => '"' + String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"').join(',') + '}';
+            }
+            // Arrays of objects → JSON string for JSONB columns
+            return JSON.stringify(val);
+        }
+        if (typeof val === 'object' && val.constructor === Object) {
             return JSON.stringify(val);
         }
         return val;
