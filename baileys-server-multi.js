@@ -6120,8 +6120,19 @@ app.get('/public/mentorados/validate/:id', async (req, res) => {
             return res.status(403).json({ error: 'Status de login inativo', blocked: true });
         }
 
+        // Generate JWT token on validate (so mentorado keeps auth after page refresh)
+        const mentoradoToken = generateToken({
+            user_id: mentorado.id,
+            email: mentorado.email,
+            organization_id: mentorado.organization_id || '9c8c0033-15ea-4e33-a55f-28d81a19693b',
+            role: 'mentorado',
+            nome: mentorado.nome_completo,
+            is_mentorado: true,
+        });
+
         return res.json({
             success: true,
+            token: mentoradoToken,
             mentorado: {
                 id: mentorado.id,
                 nome_completo: mentorado.nome_completo,
