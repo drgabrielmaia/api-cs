@@ -243,9 +243,14 @@ const uploadStorage = multer.diskStorage({
 });
 const fileUpload = multer({
     storage: uploadStorage,
-    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB (suporte a vídeos)
     fileFilter: (req, file, cb) => {
-        const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+        const allowed = [
+            'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+            'video/mp4', 'video/quicktime', 'video/webm', 'video/avi',
+            'application/pdf', 'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        ];
         cb(null, allowed.includes(file.mimetype));
     }
 });
@@ -5779,12 +5784,13 @@ async function processFollowupsForAllOrganizations() {
     let errors = 0;
 
     try {
-        const now = new Date(getSaoPauloTime());
+        // TZ=America/Sao_Paulo já está configurado no Docker, então new Date() retorna horário de SP
+        const now = new Date();
         const currentHour = now.getHours();
         const currentMinute = now.getMinutes();
         const dayOfWeek = now.getDay(); // 0=domingo, 6=sábado
 
-        console.log(`\n🔄 [FOLLOW-UP] Processando follow-ups... ${now.toLocaleString('pt-BR')}`);
+        console.log(`\n🔄 [FOLLOW-UP] Processando follow-ups... ${now.toLocaleString('pt-BR')} (H:${currentHour}:${currentMinute})`);
 
         // Buscar execuções pendentes
         const { data: executions, error: fetchError } = await supabase
@@ -6013,7 +6019,23 @@ async function processFollowupsForAllOrganizations() {
                     // O while vai reavaliar: o próximo step tem delay 0? Se sim, continua enviando.
                 }
 
-                if (stepsSentThisRun > 0) processed++;
+                if (stepsSentThisRun > 0) {
+                    processed++;
+                    // Atualizar leads_atingidos na sequência (apenas quando step 0 foi enviado)
+                    if (exec.step_atual === 0) {
+                        try {
+                            const { data: seqData } = await supabase
+                                .from('lead_followup_sequences')
+                                .select('leads_atingidos')
+                                .eq('id', exec.sequence_id)
+                                .single();
+                            await supabase.from('lead_followup_sequences').update({
+                                leads_atingidos: (seqData?.leads_atingidos || 0) + 1,
+                                updated_at: new Date().toISOString()
+                            }).eq('id', exec.sequence_id);
+                        } catch (_) {}
+                    }
+                }
 
                 // Rate limit entre leads: 3s
                 await new Promise(r => setTimeout(r, 3000));
