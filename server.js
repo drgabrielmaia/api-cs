@@ -1350,12 +1350,12 @@ async function sendWhatsAppMessage(phoneNumber, message) {
     }
 
     try {
-        // Garantir que o número tenha o formato correto
+        // Limpar número e adicionar formato WhatsApp
         let formattedNumber = phoneNumber.replace(/\D/g, '');
         if (!formattedNumber.startsWith('55')) {
             formattedNumber = '55' + formattedNumber;
         }
-        formattedNumber += '@c.us';
+        formattedNumber += '@s.whatsapp.net';
 
         await client.sendMessage(formattedNumber, message);
         console.log(`✅ Mensagem enviada para ${phoneNumber}: ${message.substring(0, 50)}...`);

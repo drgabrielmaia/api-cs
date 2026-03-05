@@ -60,25 +60,12 @@ class OrganizationSettingsManager {
         console.log(`📱 Usando admin phone fallback para ${organizationId}: ${adminPhone}`);
       }
 
-      // Garantir formato correto do número
-      let formattedPhone = adminPhone.replace(/[^\d+]/g, '');
-
-      // Se não começar com +55, adicionar
-      if (!formattedPhone.startsWith('+55') && formattedPhone.startsWith('55')) {
-        formattedPhone = '+' + formattedPhone;
-      } else if (!formattedPhone.startsWith('+')) {
-        formattedPhone = '+55' + formattedPhone;
-      }
-
-      // Para WhatsApp, adicionar @s.whatsapp.net se necessário
-      if (!formattedPhone.includes('@')) {
-        formattedPhone = formattedPhone + '@s.whatsapp.net';
-      }
-
+      // Limpar: só dígitos (a resolução inteligente é feita no endpoint de envio)
+      const formattedPhone = adminPhone.replace(/\D/g, '');
       return formattedPhone;
     } catch (error) {
       console.error(`❌ Erro ao obter admin phone para ${organizationId}:`, error.message);
-      return '+5583996910414@s.whatsapp.net'; // Fallback seguro
+      return '5583996910414'; // Fallback seguro
     }
   }
 

@@ -2467,9 +2467,16 @@ app.post('/users/:userId/send', async (req, res) => {
     }
 
     try {
-        // Resolver @lid primeiro se necessário
-        const cleanedNumber = await cleanPhoneNumber(targetNumber, null, session);
-        let jid = cleanedNumber.includes('@') ? cleanedNumber : `${cleanedNumber}@s.whatsapp.net`;
+        // Resolver número: @lid → número real → testar variações BR no WhatsApp
+        let jid;
+        if (targetNumber.includes('@lid')) {
+            const cleanedNumber = await cleanPhoneNumber(targetNumber, null, session);
+            jid = cleanedNumber.includes('@') ? cleanedNumber : `${cleanedNumber}@s.whatsapp.net`;
+        } else if (targetNumber.includes('@g.us')) {
+            jid = targetNumber; // Grupo - não alterar
+        } else {
+            jid = await resolveWhatsAppJid(targetNumber, session);
+        }
 
         // Se message é um objeto (com botões), usar diretamente
         // Se é string, converter para objeto de texto
@@ -2567,8 +2574,16 @@ app.post('/users/:userId/send-image', async (req, res) => {
     }
 
     try {
-        const cleanedNumber = await cleanPhoneNumber(targetNumber, null, session);
-        let jid = cleanedNumber.includes('@') ? cleanedNumber : `${cleanedNumber}@s.whatsapp.net`;
+        // Resolver número: @lid → número real → testar variações BR no WhatsApp
+        let jid;
+        if (targetNumber.includes('@lid')) {
+            const cleanedNumber = await cleanPhoneNumber(targetNumber, null, session);
+            jid = cleanedNumber.includes('@') ? cleanedNumber : `${cleanedNumber}@s.whatsapp.net`;
+        } else if (targetNumber.includes('@g.us')) {
+            jid = targetNumber;
+        } else {
+            jid = await resolveWhatsAppJid(targetNumber, session);
+        }
 
         let imageBuffer;
         let mimetype = 'image/jpeg';
@@ -3709,29 +3724,130 @@ async function handleAgendaCommand(phoneNumber) {
     }
 }
 
-// Função para normalizar telefone brasileiro
+// =====================================================================
+// NORMALIZADOR DEFINITIVO DE TELEFONE BRASILEIRO
+// Entrada: qualquer formato (com/sem 55, com/sem 9, com/sem DDD, com máscara)
+// Saída: array de variações para testar, ordenadas por probabilidade
+// =====================================================================
+function getBrazilianPhoneVariations(phone) {
+    if (!phone) return [];
+
+    // 1. Limpar: remover tudo que não é dígito
+    let digits = phone.replace(/\D/g, '');
+
+    // 2. Se já tem @s.whatsapp.net ou @c.us, extrair só os dígitos
+    if (phone.includes('@')) {
+        digits = phone.replace(/@.*$/, '').replace(/\D/g, '');
+    }
+
+    // 3. Remover código do país (55) se presente
+    let withoutCountry = digits;
+    if (digits.startsWith('55') && digits.length >= 12) {
+        withoutCountry = digits.substring(2);
+    }
+
+    // 4. Separar DDD e número
+    let ddd = '';
+    let number = withoutCountry;
+
+    if (withoutCountry.length >= 10) {
+        ddd = withoutCountry.substring(0, 2);
+        number = withoutCountry.substring(2);
+    }
+
+    // 5. Gerar todas as variações possíveis
+    const variations = new Set();
+
+    if (ddd && number) {
+        // Número com 9 dígitos (celular moderno): DDD + 9XXXXXXXX
+        if (number.length === 9 && number.charAt(0) === '9') {
+            const withNine = ddd + number;           // ex: 83981575146  (11 dígitos)
+            const withoutNine = ddd + number.substring(1); // ex: 8381575146   (10 dígitos)
+
+            variations.add('55' + withNine);          // 5583981575146 (13) ← mais provável
+            variations.add('55' + withoutNine);        // 558381575146  (12)
+            variations.add(withNine);                  // 83981575146   (11)
+            variations.add(withoutNine);               // 8381575146    (10)
+        }
+        // Número com 8 dígitos (sem 9): DDD + XXXXXXXX
+        else if (number.length === 8) {
+            const withNine = ddd + '9' + number;     // ex: 83981575146
+            const withoutNine = ddd + number;         // ex: 8381575146
+
+            variations.add('55' + withNine);           // 5583981575146 (13) ← mais provável
+            variations.add('55' + withoutNine);        // 558381575146  (12)
+            variations.add(withNine);                  // 83981575146   (11)
+            variations.add(withoutNine);               // 8381575146    (10)
+        }
+        // Número com 9 dígitos mas sem 9 na frente (raro, pode ser fixo longo)
+        else if (number.length === 9 && number.charAt(0) !== '9') {
+            variations.add('55' + ddd + number);
+            variations.add(ddd + number);
+        }
+        // Qualquer outro comprimento
+        else {
+            variations.add('55' + ddd + number);
+            variations.add(ddd + number);
+        }
+    } else {
+        // Sem DDD identificável - usar o número como está
+        if (!digits.startsWith('55')) {
+            variations.add('55' + digits);
+        }
+        variations.add(digits);
+    }
+
+    // Também incluir o input original limpo se for diferente
+    if (digits.length >= 10) {
+        variations.add(digits);
+    }
+
+    return [...variations];
+}
+
+// Resolve o JID correto testando variações no WhatsApp
+// Retorna o JID que o WhatsApp reconhece, ou o mais provável como fallback
+async function resolveWhatsAppJid(phone, session) {
+    const variations = getBrazilianPhoneVariations(phone);
+
+    if (variations.length === 0) {
+        // Fallback: limpar e adicionar 55
+        const clean = phone.replace(/\D/g, '');
+        return clean.startsWith('55') ? `${clean}@s.whatsapp.net` : `55${clean}@s.whatsapp.net`;
+    }
+
+    console.log(`📱 Testando ${variations.length} variações para ${phone}:`, variations);
+
+    // Tentar onWhatsApp para encontrar o número correto
+    if (session?.sock?.onWhatsApp) {
+        try {
+            // Testar todas as variações de uma vez (mais eficiente)
+            const jidsToTest = variations.map(v => `${v}@s.whatsapp.net`);
+            for (const jid of jidsToTest) {
+                try {
+                    const result = await session.sock.onWhatsApp(jid.replace('@s.whatsapp.net', ''));
+                    if (result && result.length > 0 && result[0].exists) {
+                        console.log(`✅ Número encontrado no WhatsApp: ${result[0].jid}`);
+                        return result[0].jid;
+                    }
+                } catch (e) {
+                    // Silently continue to next variation
+                }
+            }
+            console.log(`⚠️ Nenhuma variação encontrada no WhatsApp, usando primeira opção: ${variations[0]}`);
+        } catch (error) {
+            console.log(`⚠️ Erro no onWhatsApp, usando primeira variação: ${variations[0]}`);
+        }
+    }
+
+    // Fallback: usar a primeira variação (mais provável: 55+DDD+9+número)
+    return `${variations[0]}@s.whatsapp.net`;
+}
+
+// Wrapper simples para compatibilidade - retorna o número mais provável
 function normalizePhone(phone) {
-    if (!phone) return '';
-
-    // Remover todos os caracteres não numéricos
-    const cleanPhone = phone.replace(/\D/g, '');
-
-    // Se começar com 55, já está no formato internacional
-    if (cleanPhone.startsWith('55')) {
-        return cleanPhone;
-    }
-
-    // Se tem 11 dígitos (celular), adicionar 55
-    if (cleanPhone.length === 11) {
-        return `55${cleanPhone}`;
-    }
-
-    // Se tem 10 dígitos (fixo), adicionar 55
-    if (cleanPhone.length === 10) {
-        return `55${cleanPhone}`;
-    }
-
-    return cleanPhone;
+    const variations = getBrazilianPhoneVariations(phone);
+    return variations.length > 0 ? variations[0] : phone.replace(/\D/g, '');
 }
 
 // Função para buscar eventos do dia no Supabase com dados de leads/mentorados
