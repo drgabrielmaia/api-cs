@@ -2021,6 +2021,17 @@ const ALLOWED_TABLES = [
     'clinica_mensagens',
     // Comunidade/Feed
     'community_posts', 'community_reactions', 'community_comments',
+    // Follow-up Sequences
+    'lead_followup_sequences', 'lead_followup_executions',
+    // Agendamentos
+    'agendamentos', 'agendamento_links',
+    // Lead extra
+    'lead_historico', 'lead_history', 'lead_interactions', 'lead_qualification_details',
+    'lead_followups', 'follow_ups',
+    // Appointments
+    'appointments',
+    // Faturamento / Transações
+    'faturamento', 'transacoes_financeiras', 'comissoes',
 ];
 
 // Sanitize column names to prevent SQL injection
@@ -2073,20 +2084,55 @@ app.post('/api/rpc/:name', async (req, res) => {
 // Helper: Parse Supabase-style select with JOINs
 // Pattern: "col1, col2, relatedTable:fkColumn(col3, col4)"
 // =====================================================================
+// Map of known FK columns: when joining from a child table, infer which column
+// references the joined table. E.g. lead_followup_executions -> leads via lead_id
+const FK_MAP = {
+    'leads': 'lead_id',
+    'closers': 'closer_id',
+    'organizations': 'organization_id',
+    'mentorados': 'mentorado_id',
+    'lead_followup_sequences': 'sequence_id',
+    'form_templates': 'template_id',
+    'video_modules': 'module_id',
+    'video_lessons': 'lesson_id',
+};
+
 function parseSelectWithJoins(selectStr, baseTable) {
     if (!selectStr || selectStr === '*') return { baseCols: '*', joins: [], hasJoins: false };
 
     const joins = [];
-    // Match patterns like: tableName:fkColumn(col1, col2, col3)
-    const joinRegex = /(\w+):(\w+)\(([^)]+)\)/g;
     let cleanSelect = selectStr;
-    let match;
 
-    while ((match = joinRegex.exec(selectStr)) !== null) {
+    // Pattern 1: tableName:fkColumn(col1, col2, col3) — explicit FK
+    const joinRegex1 = /(\w+):(\w+)\(([^)]+)\)/g;
+    let match;
+    while ((match = joinRegex1.exec(selectStr)) !== null) {
         const [fullMatch, joinTable, fkColumn, joinColsStr] = match;
-        if (!ALLOWED_TABLES.includes(joinTable)) continue; // Skip disallowed tables
+        if (!ALLOWED_TABLES.includes(joinTable)) continue;
         const joinCols = joinColsStr.split(',').map(c => c.trim()).map(sanitizeColumn);
-        joins.push({ alias: joinTable, table: joinTable, fkColumn: sanitizeColumn(fkColumn), columns: joinCols });
+        joins.push({ alias: joinTable, table: joinTable, fkColumn: sanitizeColumn(fkColumn), columns: joinCols, inner: false });
+        cleanSelect = cleanSelect.replace(fullMatch, '');
+    }
+
+    // Pattern 2: tableName!inner(col1, col2) — Supabase !inner join (infer FK)
+    const joinRegex2 = /([\w]+)!inner\(([^)]+)\)/g;
+    while ((match = joinRegex2.exec(selectStr)) !== null) {
+        const [fullMatch, joinTable, joinColsStr] = match;
+        if (!ALLOWED_TABLES.includes(joinTable)) continue;
+        const fkColumn = FK_MAP[joinTable] || `${joinTable.replace(/s$/, '')}_id`;
+        const joinCols = joinColsStr.split(',').map(c => c.trim()).map(sanitizeColumn);
+        joins.push({ alias: joinTable, table: joinTable, fkColumn, columns: joinCols, inner: true });
+        cleanSelect = cleanSelect.replace(fullMatch, '');
+    }
+
+    // Pattern 3: tableName(col1, col2) — implicit join (infer FK)
+    const joinRegex3 = /(?<![:\w!])([\w]+)\(([^)]+)\)/g;
+    while ((match = joinRegex3.exec(cleanSelect)) !== null) {
+        const [fullMatch, joinTable, joinColsStr] = match;
+        if (!ALLOWED_TABLES.includes(joinTable)) continue;
+        const fkColumn = FK_MAP[joinTable] || `${joinTable.replace(/s$/, '')}_id`;
+        const joinCols = joinColsStr.split(',').map(c => c.trim()).map(sanitizeColumn);
+        joins.push({ alias: joinTable, table: joinTable, fkColumn, columns: joinCols, inner: false });
         cleanSelect = cleanSelect.replace(fullMatch, '');
     }
 
@@ -2228,7 +2274,8 @@ app.post('/api/query', async (req, res) => {
                 }
                 sql = `SELECT ${selectParts} FROM ${table}`;
                 for (const j of joins) {
-                    sql += ` LEFT JOIN ${j.table} AS ${j.alias} ON ${table}.${j.fkColumn} = ${j.alias}.id`;
+                    const joinType = j.inner ? 'INNER JOIN' : 'LEFT JOIN';
+                    sql += ` ${joinType} ${j.table} AS ${j.alias} ON ${table}.${j.fkColumn} = ${j.alias}.id`;
                 }
             }
 
