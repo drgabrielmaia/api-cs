@@ -2650,6 +2650,109 @@ app.post('/users/:userId/send-image', async (req, res) => {
     }
 });
 
+// User-specific send media (image, video, document) via URL
+app.post('/users/:userId/send-media', async (req, res) => {
+    const { userId } = req.params;
+    const { to, phoneNumber, mediaUrl, mediaType, caption, filename, mimetype } = req.body;
+    const targetNumber = to || phoneNumber;
+    const session = getSession(userId);
+
+    if (!session || !session.isReady || !session.sock) {
+        return res.json({ success: false, error: 'WhatsApp não está conectado' });
+    }
+
+    if (!mediaUrl) {
+        return res.json({ success: false, error: 'mediaUrl é obrigatório' });
+    }
+
+    try {
+        // Resolver número
+        let jid;
+        if (targetNumber.includes('@lid')) {
+            const cleanedNumber = await cleanPhoneNumber(targetNumber, null, session);
+            jid = cleanedNumber.includes('@') ? cleanedNumber : `${cleanedNumber}@s.whatsapp.net`;
+        } else if (targetNumber.includes('@g.us')) {
+            jid = targetNumber;
+        } else {
+            jid = await resolveWhatsAppJid(targetNumber, session);
+        }
+
+        let baileysMessage;
+        const effectiveType = mediaType || 'image';
+
+        if (effectiveType === 'video') {
+            // Download video and send as buffer for better compatibility
+            const mediaRes = await fetch(mediaUrl);
+            if (!mediaRes.ok) throw new Error('Falha ao baixar vídeo');
+            const arrayBuffer = await mediaRes.arrayBuffer();
+            const mediaBuffer = Buffer.from(arrayBuffer);
+            baileysMessage = {
+                video: mediaBuffer,
+                mimetype: mimetype || mediaRes.headers.get('content-type') || 'video/mp4',
+                caption: caption || ''
+            };
+        } else if (effectiveType === 'document') {
+            const mediaRes = await fetch(mediaUrl);
+            if (!mediaRes.ok) throw new Error('Falha ao baixar documento');
+            const arrayBuffer = await mediaRes.arrayBuffer();
+            const mediaBuffer = Buffer.from(arrayBuffer);
+            baileysMessage = {
+                document: mediaBuffer,
+                fileName: filename || 'arquivo',
+                mimetype: mimetype || mediaRes.headers.get('content-type') || 'application/pdf',
+                caption: caption || ''
+            };
+        } else {
+            // image (default)
+            const mediaRes = await fetch(mediaUrl);
+            if (!mediaRes.ok) throw new Error('Falha ao baixar imagem');
+            const arrayBuffer = await mediaRes.arrayBuffer();
+            const mediaBuffer = Buffer.from(arrayBuffer);
+            baileysMessage = {
+                image: mediaBuffer,
+                mimetype: mimetype || mediaRes.headers.get('content-type') || 'image/jpeg',
+                caption: caption || ''
+            };
+        }
+
+        const sentMessage = await session.sock.sendMessage(jid, baileysMessage);
+
+        const cleanJidNumber = jid.replace(/@.*$/, '');
+        const messageObj = {
+            id: sentMessage.key.id,
+            from: session.sock.user.id,
+            to: jid,
+            body: caption || `[${effectiveType}]`,
+            type: effectiveType,
+            timestamp: Date.now(),
+            isFromMe: true,
+            contact: {
+                id: jid,
+                name: cleanJidNumber,
+                pushname: '',
+                number: cleanJidNumber
+            }
+        };
+
+        session.messagesList.unshift(messageObj);
+        if (session.messagesList.length > 100) session.messagesList.pop();
+
+        if (!session.chatMessages.has(jid)) session.chatMessages.set(jid, []);
+        const chatMsgs = session.chatMessages.get(jid);
+        chatMsgs.unshift(messageObj);
+        if (chatMsgs.length > 50) chatMsgs.pop();
+
+        sendEventToUserClients(userId, 'new_message', messageObj);
+        sendEventToUserClients(userId, 'chat_message_update', { chatId: jid, message: messageObj });
+
+        console.log(`✅ [${userId}] Mídia (${effectiveType}) enviada para ${jid}`);
+        res.json({ success: true, message: `${effectiveType} enviado com sucesso` });
+    } catch (error) {
+        console.error(`❌ [${userId}] Erro ao enviar mídia:`, error);
+        res.json({ success: false, error: 'Erro ao enviar mídia: ' + (error.message || '') });
+    }
+});
+
 // User-specific messages
 app.get('/users/:userId/messages', (req, res) => {
     const { userId } = req.params;
