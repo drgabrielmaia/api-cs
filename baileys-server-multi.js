@@ -4488,6 +4488,151 @@ async function checkAndSendNotifications(isDailySummary = false) {
     }
 }
 
+// =====================================================================
+// FOLLOW-UP CRON - Processa follow-ups pendentes automaticamente
+// =====================================================================
+async function processFollowupsCron() {
+    try {
+        const { data: executions, error } = await supabase
+            .from('lead_followup_executions')
+            .select('*, leads(nome_completo, email, telefone, whatsapp), lead_followup_sequences(steps, nome_sequencia, horario_envio_inicio, horario_envio_fim)')
+            .eq('status', 'active')
+            .lt('proxima_execucao', new Date().toISOString())
+            .limit(20);
+
+        if (error) {
+            console.error('❌ Follow-up CRON: Erro ao buscar:', error.message);
+            return;
+        }
+        if (!executions || executions.length === 0) return;
+
+        console.log(`📋 Follow-up CRON: ${executions.length} execuções pendentes`);
+
+        for (const execution of executions) {
+            try {
+                const lead = execution.leads;
+                const sequence = execution.lead_followup_sequences;
+                if (!lead || !sequence) continue;
+
+                const steps = sequence.steps || [];
+                const now = new Date();
+                const currentHour = now.getHours();
+                const startHour = parseInt((sequence.horario_envio_inicio || '0').split(':')[0]);
+                const endHour = parseInt((sequence.horario_envio_fim || '23').split(':')[0]);
+                if (currentHour < startHour || currentHour >= endHour) continue;
+
+                let idx = execution.step_atual;
+                let touchpoints = execution.total_touchpoints || 0;
+                let executed = [...(execution.steps_executados || [])];
+                let sentCount = 0;
+
+                while (idx < steps.length && sentCount < 5) {
+                    const step = steps[idx];
+                    if (!step) break;
+
+                    if (sentCount > 0) {
+                        const delayMs = ((step.delay_days || 0) * 86400000) + ((step.delay_hours || 0) * 3600000) + ((step.delay_minutes || 0) * 60000);
+                        if (delayMs > 0) {
+                            await supabase.from('lead_followup_executions').update({
+                                step_atual: idx, total_touchpoints: touchpoints, steps_executados: executed,
+                                proxima_execucao: new Date(Date.now() + delayMs).toISOString(), updated_at: new Date().toISOString()
+                            }).eq('id', execution.id);
+                            break;
+                        }
+                    }
+
+                    let sent = false;
+                    const phone = lead.telefone || lead.whatsapp;
+
+                    if (step.tipo_acao === 'whatsapp' && phone) {
+                        let msg = (step.conteudo || '')
+                            .replace(/\{\{nome\}\}/g, lead.nome_completo || '')
+                            .replace(/\{\{email\}\}/g, lead.email || '')
+                            .replace(/\{\{telefone\}\}/g, phone || '');
+
+                        const cleanPhone = phone.replace(/\D/g, '');
+                        const sessionKeys = Object.keys(sessions);
+                        let session = null;
+                        for (const key of sessionKeys) {
+                            if (sessions[key] && sessions[key].isReady && sessions[key].sock) {
+                                session = sessions[key];
+                                break;
+                            }
+                        }
+
+                        if (session) {
+                            try {
+                                const jid = await resolveWhatsAppJid(cleanPhone, session);
+                                if (step.media_url && step.media_type) {
+                                    const mediaMsg = step.media_type === 'image'
+                                        ? { image: { url: step.media_url }, caption: msg }
+                                        : step.media_type === 'video'
+                                        ? { video: { url: step.media_url }, caption: msg }
+                                        : { document: { url: step.media_url }, caption: msg, fileName: step.media_filename || 'arquivo' };
+                                    await session.sock.sendMessage(jid, mediaMsg);
+                                } else {
+                                    await session.sock.sendMessage(jid, { text: msg });
+                                }
+                                sent = true;
+                                console.log(`✅ Follow-up step ${idx + 1}/${steps.length} → ${lead.nome_completo}`);
+                            } catch (sendErr) {
+                                console.error(`❌ Follow-up send error (${lead.nome_completo}):`, sendErr.message);
+                            }
+                        }
+                    } else if (step.tipo_acao === 'email' || step.tipo_acao === 'tarefa') {
+                        sent = true;
+                    }
+
+                    if (sent) {
+                        touchpoints++;
+                        sentCount++;
+                        executed.push({ step: idx, titulo: step.titulo, executed_at: new Date().toISOString(), type: step.tipo_acao });
+                        idx++;
+
+                        if (idx >= steps.length) {
+                            await supabase.from('lead_followup_executions').update({
+                                step_atual: idx, status: 'completed', total_touchpoints: touchpoints,
+                                steps_executados: executed, proxima_execucao: null, updated_at: new Date().toISOString()
+                            }).eq('id', execution.id);
+                            console.log(`🎉 Follow-up completo: ${lead.nome_completo}`);
+                            break;
+                        }
+                    } else {
+                        await supabase.from('lead_followup_executions').update({
+                            step_atual: idx, total_touchpoints: touchpoints, steps_executados: executed, updated_at: new Date().toISOString()
+                        }).eq('id', execution.id);
+                        break;
+                    }
+                }
+
+                // Salvar estado se ainda tem steps e enviou algo
+                if (idx < steps.length && sentCount > 0 && idx !== execution.step_atual) {
+                    const nextStep = steps[idx];
+                    const nextDelay = nextStep ? ((nextStep.delay_days || 0) * 86400000) + ((nextStep.delay_hours || 0) * 3600000) + ((nextStep.delay_minutes || 0) * 60000) : 60000;
+                    await supabase.from('lead_followup_executions').update({
+                        step_atual: idx, total_touchpoints: touchpoints, steps_executados: executed,
+                        proxima_execucao: new Date(Date.now() + Math.max(nextDelay, 60000)).toISOString(), updated_at: new Date().toISOString()
+                    }).eq('id', execution.id);
+                }
+            } catch (execErr) {
+                console.error('❌ Follow-up exec error:', execErr.message);
+            }
+        }
+    } catch (err) {
+        console.error('❌ Follow-up CRON error:', err.message);
+    }
+}
+
+// Endpoint manual para processar follow-ups
+app.post('/process-followups', async (req, res) => {
+    try {
+        await processFollowupsCron();
+        res.json({ success: true, message: 'Follow-ups processados' });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // Configurar cron jobs
 function setupCronJobs() {
     // Job principal: verificar a cada 2 minutos para lembretes de 30min
@@ -4513,10 +4658,21 @@ function setupCronJobs() {
         }
     });
 
+    // Follow-up CRON: processar follow-ups pendentes a cada 5 minutos
+    cron.schedule('*/5 * * * *', async () => {
+        console.log('📧 CRON: Processando follow-ups pendentes...');
+        try {
+            await processFollowupsCron();
+        } catch (err) {
+            console.error('❌ Follow-up CRON error:', err.message);
+        }
+    });
+
     console.log('⏰ Cron jobs configurados:');
     console.log('   - Verificação de lembretes a cada 2 minutos (30min antes)');
     console.log('   - Resumo diário às 7h UTC (10h São Paulo)');
     console.log('   - Cleanup de stories expirados a cada 6 horas');
+    console.log('   - Follow-up automático a cada 5 minutos');
 
     // 🧪 TESTE IMEDIATO DO RESUMO DIÁRIO
     console.log('🧪 EXECUTANDO TESTE IMEDIATO DO RESUMO DIÁRIO...');
