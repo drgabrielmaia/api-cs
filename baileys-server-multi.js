@@ -729,22 +729,29 @@ const defaultUserId = 'default'; // Usuário padrão para notificações
 // =====================================================================
 const DEFAULT_ORG_ID = '9c8c0033-15ea-4e33-a55f-28d81a19693b';
 
-async function getOrgWhatsAppGroupJid(orgId) {
+async function getOrgWhatsAppGroupJid(orgId, type = 'aulas') {
     try {
+        const col = type === 'eventos' ? 'whatsapp_group_eventos' : 'whatsapp_group_aulas';
+        const notifyCol = type === 'eventos' ? 'whatsapp_auto_notify_evento' : 'whatsapp_auto_notify_aula';
         const result = await supabase.query(
-            `SELECT whatsapp_group_jid FROM organizations WHERE id = $1 LIMIT 1`,
+            `SELECT ${col}, ${notifyCol}, whatsapp_group_jid FROM organizations WHERE id = $1 LIMIT 1`,
             [orgId]
         );
-        return result.rows?.[0]?.whatsapp_group_jid || null;
+        const row = result.rows?.[0];
+        if (!row) return null;
+        // Checar se notificação está ativa
+        if (!row[notifyCol]) return null;
+        // Usar campo específico, fallback para whatsapp_group_jid
+        return row[col] || row.whatsapp_group_jid || null;
     } catch (err) {
         console.error('❌ Erro ao buscar group JID:', err.message);
         return null;
     }
 }
 
-async function sendGroupNotification(orgId, message) {
+async function sendGroupNotification(orgId, message, type = 'aulas') {
     try {
-        const groupJid = await getOrgWhatsAppGroupJid(orgId);
+        const groupJid = await getOrgWhatsAppGroupJid(orgId, type);
         if (!groupJid) {
             console.log(`⚠️ Org ${orgId} não tem grupo WhatsApp configurado`);
             return false;
@@ -815,7 +822,8 @@ async function handlePostInsertNotification(table, insertedData) {
         }
 
         if (message) {
-            await sendGroupNotification(orgId, message);
+            const notifyType = table === 'group_events' ? 'eventos' : 'aulas';
+            await sendGroupNotification(orgId, message, notifyType);
         }
     }
 }
@@ -4551,11 +4559,10 @@ async function processFollowupsCron() {
                             .replace(/\{\{telefone\}\}/g, phone || '');
 
                         const cleanPhone = phone.replace(/\D/g, '');
-                        const sessionKeys = Object.keys(sessions);
                         let session = null;
-                        for (const key of sessionKeys) {
-                            if (sessions[key] && sessions[key].isReady && sessions[key].sock) {
-                                session = sessions[key];
+                        for (const [key, s] of userSessions) {
+                            if (s && s.isReady && s.sock) {
+                                session = s;
                                 break;
                             }
                         }
