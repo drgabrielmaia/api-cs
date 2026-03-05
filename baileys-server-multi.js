@@ -5880,12 +5880,15 @@ async function processFollowupsForAllOrganizations() {
                     continue;
                 }
 
-                // Pegar step atual
+                // Pegar step atual e processar MÚLTIPLOS steps se delay = 0
                 const steps = sequence.steps || [];
-                const stepIndex = exec.step_atual || 0;
+                let currentStepIndex = exec.step_atual || 0;
+                let totalTouchpoints = exec.total_touchpoints || 0;
+                let stepsExecutados = [...(exec.steps_executados || [])];
+                let stepsSentThisRun = 0;
+                const MAX_STEPS_PER_RUN = 5;
 
-                if (stepIndex >= steps.length) {
-                    // Todos os steps já foram executados
+                if (currentStepIndex >= steps.length) {
                     await supabase.from('lead_followup_executions').update({
                         status: 'completed',
                         updated_at: new Date().toISOString()
@@ -5894,91 +5897,125 @@ async function processFollowupsForAllOrganizations() {
                     continue;
                 }
 
-                const step = steps[stepIndex];
+                // LOOP: processar steps consecutivos com delay 0
+                while (currentStepIndex < steps.length && stepsSentThisRun < MAX_STEPS_PER_RUN) {
+                    const step = steps[currentStepIndex];
+                    if (!step) break;
 
-                // Substituir variáveis no conteúdo
-                let messageContent = (step.conteudo || '').replace(/\{\{nome\}\}/gi, lead.nome_completo || '')
-                    .replace(/\{\{empresa\}\}/gi, lead.empresa || '')
-                    .replace(/\{\{email\}\}/gi, lead.email || '')
-                    .replace(/\{\{telefone\}\}/gi, lead.telefone || '');
+                    // Para steps após o primeiro neste run, verificar delay
+                    if (stepsSentThisRun > 0) {
+                        const stepDelayMs = (
+                            (step.delay_days || 0) * 86400000 +
+                            (step.delay_hours || 0) * 3600000 +
+                            (step.delay_minutes || 0) * 60000
+                        );
 
-                // Montar mensagem Baileys baseado no tipo de mídia
-                let baileysMessage;
-                if (step.media_url && step.media_type === 'image') {
-                    baileysMessage = { image: { url: step.media_url }, caption: messageContent };
-                } else if (step.media_url && step.media_type === 'video') {
-                    baileysMessage = { video: { url: step.media_url }, caption: messageContent };
-                } else if (step.media_url && step.media_type === 'document') {
-                    baileysMessage = {
-                        document: { url: step.media_url },
-                        fileName: step.media_filename || 'arquivo',
-                        mimetype: step.media_mimetype || 'application/pdf',
-                        caption: messageContent
-                    };
-                } else {
-                    baileysMessage = { text: messageContent };
-                }
+                        if (stepDelayMs > 0) {
+                            // Tem delay > 0, agendar e parar
+                            const nextExec = new Date(Date.now() + stepDelayMs);
 
-                // Enviar mensagem
-                const sent = await sendWhatsAppMessageForOrganization(orgId, lead.telefone, baileysMessage);
+                            // Se cair fora do horário, ajustar
+                            const nextExecHour = nextExec.getHours();
+                            if (nextExecHour < startH || nextExecHour >= endH) {
+                                nextExec.setHours(startH, startM, 0, 0);
+                                if (nextExecHour >= endH) {
+                                    nextExec.setDate(nextExec.getDate() + 1);
+                                }
+                            }
 
-                if (!sent) {
-                    console.error(`❌ [FOLLOW-UP] Falha ao enviar para lead "${lead.nome_completo}" (${lead.telefone})`);
-                    errors++;
-                    continue;
-                }
+                            await supabase.from('lead_followup_executions').update({
+                                step_atual: currentStepIndex,
+                                proxima_execucao: nextExec.toISOString(),
+                                steps_executados: stepsExecutados,
+                                total_touchpoints: totalTouchpoints,
+                                updated_at: new Date().toISOString()
+                            }).eq('id', exec.id);
 
-                // Calcular próxima execução
-                const nextStepIndex = stepIndex + 1;
-                const stepsExecutados = exec.steps_executados || [];
-                stepsExecutados.push({
-                    step: stepIndex,
-                    titulo: step.titulo,
-                    executado_em: new Date().toISOString(),
-                    tipo: step.tipo_acao
-                });
-
-                if (nextStepIndex >= steps.length) {
-                    // Era o último step
-                    await supabase.from('lead_followup_executions').update({
-                        status: 'completed',
-                        step_atual: nextStepIndex,
-                        steps_executados: stepsExecutados,
-                        total_touchpoints: (exec.total_touchpoints || 0) + 1,
-                        updated_at: new Date().toISOString()
-                    }).eq('id', exec.id);
-                    console.log(`🏁 [FOLLOW-UP] Sequência COMPLETA para "${lead.nome_completo}" (${steps.length} steps)`);
-                } else {
-                    // Calcular delay para próximo step
-                    const nextStep = steps[nextStepIndex];
-                    const delayDays = nextStep.delay_days || 0;
-                    const delayHours = nextStep.delay_hours || 0;
-                    const nextExec = new Date(now);
-                    nextExec.setDate(nextExec.getDate() + delayDays);
-                    nextExec.setHours(nextExec.getHours() + delayHours);
-
-                    // Se próxima execução cair fora do horário, ajustar
-                    const nextExecHour = nextExec.getHours();
-                    if (nextExecHour < startH || nextExecHour >= endH) {
-                        nextExec.setHours(startH, startM, 0, 0);
-                        if (nextExecHour >= endH) {
-                            nextExec.setDate(nextExec.getDate() + 1);
+                            const delayDesc = [
+                                step.delay_days ? `${step.delay_days}d` : '',
+                                step.delay_hours ? `${step.delay_hours}h` : '',
+                                step.delay_minutes ? `${step.delay_minutes}min` : ''
+                            ].filter(Boolean).join(' ');
+                            console.log(`⏳ [FOLLOW-UP] ${stepsSentThisRun} step(s) enviados para "${lead.nome_completo}" — próximo em ${delayDesc}`);
+                            break;
                         }
+                        // delay é 0 → continuar processando
                     }
 
-                    await supabase.from('lead_followup_executions').update({
-                        step_atual: nextStepIndex,
-                        proxima_execucao: nextExec.toISOString(),
-                        steps_executados: stepsExecutados,
-                        total_touchpoints: (exec.total_touchpoints || 0) + 1,
-                        updated_at: new Date().toISOString()
-                    }).eq('id', exec.id);
-                    console.log(`📨 [FOLLOW-UP] Step ${stepIndex + 1}/${steps.length} enviado para "${lead.nome_completo}" — próximo em ${delayDays}d ${delayHours}h`);
+                    // Substituir variáveis no conteúdo
+                    let messageContent = (step.conteudo || '').replace(/\{\{nome\}\}/gi, lead.nome_completo || '')
+                        .replace(/\{\{empresa\}\}/gi, lead.empresa || '')
+                        .replace(/\{\{email\}\}/gi, lead.email || '')
+                        .replace(/\{\{telefone\}\}/gi, lead.telefone || '');
+
+                    // Montar mensagem Baileys baseado no tipo de mídia
+                    let baileysMessage;
+                    if (step.media_url && step.media_type === 'image') {
+                        baileysMessage = { image: { url: step.media_url }, caption: messageContent };
+                    } else if (step.media_url && step.media_type === 'video') {
+                        baileysMessage = { video: { url: step.media_url }, caption: messageContent };
+                    } else if (step.media_url && step.media_type === 'document') {
+                        baileysMessage = {
+                            document: { url: step.media_url },
+                            fileName: step.media_filename || 'arquivo',
+                            mimetype: step.media_mimetype || 'application/pdf',
+                            caption: messageContent
+                        };
+                    } else {
+                        baileysMessage = { text: messageContent };
+                    }
+
+                    // Enviar mensagem
+                    const sent = await sendWhatsAppMessageForOrganization(orgId, lead.telefone, baileysMessage);
+
+                    if (!sent) {
+                        console.error(`❌ [FOLLOW-UP] Falha ao enviar step ${currentStepIndex + 1} para "${lead.nome_completo}"`);
+                        // Salvar estado e sair
+                        await supabase.from('lead_followup_executions').update({
+                            step_atual: currentStepIndex,
+                            steps_executados: stepsExecutados,
+                            total_touchpoints: totalTouchpoints,
+                            updated_at: new Date().toISOString()
+                        }).eq('id', exec.id);
+                        errors++;
+                        break;
+                    }
+
+                    // Step enviado com sucesso
+                    totalTouchpoints++;
+                    stepsSentThisRun++;
+                    stepsExecutados.push({
+                        step: currentStepIndex,
+                        titulo: step.titulo,
+                        executado_em: new Date().toISOString(),
+                        tipo: step.tipo_acao
+                    });
+
+                    console.log(`✅ [FOLLOW-UP] Step ${currentStepIndex + 1}/${steps.length} enviado para "${lead.nome_completo}"`);
+                    currentStepIndex++;
+
+                    // Se era o último step, marcar como completo
+                    if (currentStepIndex >= steps.length) {
+                        await supabase.from('lead_followup_executions').update({
+                            status: 'completed',
+                            step_atual: currentStepIndex,
+                            steps_executados: stepsExecutados,
+                            total_touchpoints: totalTouchpoints,
+                            updated_at: new Date().toISOString()
+                        }).eq('id', exec.id);
+                        console.log(`🏁 [FOLLOW-UP] Sequência COMPLETA para "${lead.nome_completo}" (${steps.length} steps, ${stepsSentThisRun} enviados agora)`);
+                        break;
+                    }
+
+                    // Rate limit entre steps: 2s
+                    await new Promise(r => setTimeout(r, 2000));
+
+                    // O while vai reavaliar: o próximo step tem delay 0? Se sim, continua enviando.
                 }
 
-                processed++;
+                if (stepsSentThisRun > 0) processed++;
 
-                // Rate limit: 3s entre envios
+                // Rate limit entre leads: 3s
                 await new Promise(r => setTimeout(r, 3000));
 
             } catch (stepError) {
@@ -5999,7 +6036,8 @@ async function processFollowupsForAllOrganizations() {
 }
 
 // Cron: processar follow-ups a cada 10 minutos
-cron.schedule('*/10 * * * *', processFollowupsForAllOrganizations);
+// Processar follow-ups a cada 2 minutos para envios imediatos serem rápidos
+cron.schedule('*/2 * * * *', processFollowupsForAllOrganizations);
 
 // Endpoints de follow-up
 app.post('/process-followups', async (req, res) => {
