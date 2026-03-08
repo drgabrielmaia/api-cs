@@ -215,7 +215,7 @@ const app = express();
 const port = process.env.PORT || 3001;
 
 app.use(cors({
-    origin: ['http://localhost:3000', 'https://api.medicosderesultado.com.br'],
+    origin: true, // Allow all origins (nginx handles prod restrictions)
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning']
