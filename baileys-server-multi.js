@@ -4497,9 +4497,9 @@ async function checkAndSendNotifications(isDailySummary = false) {
 }
 
 // =====================================================================
-// FOLLOW-UP CRON - Processa follow-ups pendentes automaticamente
+// FOLLOW-UP CRON ANTIGO - REMOVIDO (usando processFollowupsForAllOrganizations)
 // =====================================================================
-async function processFollowupsCron() {
+async function processFollowupsCron_DISABLED() {
     try {
         const { data: executions, error } = await supabase
             .from('lead_followup_executions')
@@ -4630,15 +4630,7 @@ async function processFollowupsCron() {
     }
 }
 
-// Endpoint manual para processar follow-ups
-app.post('/process-followups', async (req, res) => {
-    try {
-        await processFollowupsCron();
-        res.json({ success: true, message: 'Follow-ups processados' });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
-});
+// Endpoint manual antigo removido — usando o de processFollowupsForAllOrganizations abaixo
 
 // Configurar cron jobs
 function setupCronJobs() {
@@ -4665,21 +4657,13 @@ function setupCronJobs() {
         }
     });
 
-    // Follow-up CRON: processar follow-ups pendentes a cada 5 minutos
-    cron.schedule('*/5 * * * *', async () => {
-        console.log('📧 CRON: Processando follow-ups pendentes...');
-        try {
-            await processFollowupsCron();
-        } catch (err) {
-            console.error('❌ Follow-up CRON error:', err.message);
-        }
-    });
+    // Follow-up CRON antigo removido — usando processFollowupsForAllOrganizations
 
     console.log('⏰ Cron jobs configurados:');
     console.log('   - Verificação de lembretes a cada 2 minutos (30min antes)');
     console.log('   - Resumo diário às 7h UTC (10h São Paulo)');
     console.log('   - Cleanup de stories expirados a cada 6 horas');
-    console.log('   - Follow-up automático a cada 5 minutos');
+    console.log('   - Follow-up automático a cada 30 segundos (via processFollowupsForAllOrganizations)');
 
     // 🧪 TESTE IMEDIATO DO RESUMO DIÁRIO
     console.log('🧪 EXECUTANDO TESTE IMEDIATO DO RESUMO DIÁRIO...');
@@ -6050,10 +6034,18 @@ async function processFollowupsForAllOrganizations() {
                 }
 
                 // Pegar step atual e processar MÚLTIPLOS steps se delay = 0
-                const steps = sequence.steps || [];
+                let steps = sequence.steps || [];
+                if (typeof steps === 'string') { try { steps = JSON.parse(steps); } catch(e) { steps = []; } }
+                if (!Array.isArray(steps)) steps = [];
+
                 let currentStepIndex = exec.step_atual || 0;
                 let totalTouchpoints = exec.total_touchpoints || 0;
-                let stepsExecutados = [...(exec.steps_executados || [])];
+
+                let rawStepsExec = exec.steps_executados || [];
+                if (typeof rawStepsExec === 'string') { try { rawStepsExec = JSON.parse(rawStepsExec); } catch(e) { rawStepsExec = []; } }
+                if (!Array.isArray(rawStepsExec)) rawStepsExec = [];
+                let stepsExecutados = [...rawStepsExec];
+
                 let stepsSentThisRun = 0;
                 const MAX_STEPS_PER_RUN = 5;
 
@@ -6220,9 +6212,8 @@ async function processFollowupsForAllOrganizations() {
     }
 }
 
-// Cron: processar follow-ups a cada 10 minutos
-// Processar follow-ups a cada 2 minutos para envios imediatos serem rápidos
-cron.schedule('*/2 * * * *', processFollowupsForAllOrganizations);
+// Processar follow-ups a cada 30 segundos para envios imediatos serem rápidos
+cron.schedule('*/30 * * * * *', processFollowupsForAllOrganizations);
 
 // Endpoints de follow-up
 app.post('/process-followups', async (req, res) => {
@@ -6617,7 +6608,33 @@ app.listen(port, async () => {
     console.log(`📸 Instagram webhook: GET/POST /instagram-webhook`);
     console.log(`🔐 Variáveis necessárias: INSTAGRAM_APP_SECRET, INSTAGRAM_VERIFY_TOKEN`);
 
-    // Configurar jobs após 10 segundos (dar tempo para sessões conectarem)
+    // Auto-reconectar sessões WhatsApp salvas no auth_info_baileys
+    try {
+        const authBaseDir = path.join(__dirname, 'auth_info_baileys');
+        if (fs.existsSync(authBaseDir)) {
+            const sessionDirs = fs.readdirSync(authBaseDir).filter(d => d.startsWith('user_') && fs.statSync(path.join(authBaseDir, d)).isDirectory());
+            console.log(`🔄 Encontradas ${sessionDirs.length} sessões WhatsApp salvas, reconectando...`);
+            for (const dir of sessionDirs) {
+                const userId = dir.replace('user_', '');
+                // Verificar se tem creds.json (sessão válida)
+                const credsPath = path.join(authBaseDir, dir, 'creds.json');
+                if (fs.existsSync(credsPath)) {
+                    console.log(`🔌 Reconectando sessão: ${userId}`);
+                    try {
+                        await connectUserToWhatsApp(userId);
+                    } catch (connErr) {
+                        console.error(`❌ Falha ao reconectar ${userId}:`, connErr.message);
+                    }
+                    // Delay entre reconexões para não sobrecarregar
+                    await new Promise(r => setTimeout(r, 3000));
+                }
+            }
+        }
+    } catch (autoConnErr) {
+        console.error('❌ Erro no auto-reconnect:', autoConnErr.message);
+    }
+
+    // Configurar jobs após 15 segundos (dar tempo para sessões conectarem)
     setTimeout(() => {
         addNotificationLog('success', 'Sistema de notificações WhatsApp iniciado com sucesso', {
             port,
@@ -6625,5 +6642,5 @@ app.listen(port, async () => {
         });
         setupCronJobs();
         setupLeadsPDFJobs();
-    }, 10000);
+    }, 15000);
 });
