@@ -2663,6 +2663,92 @@ app.post('/users/:userId/send-image', async (req, res) => {
     }
 });
 
+// User-specific send video (base64 or URL)
+app.post('/users/:userId/send-video', async (req, res) => {
+    const { userId } = req.params;
+    const { to, phoneNumber, videoBase64, videoUrl, caption } = req.body;
+    const targetNumber = to || phoneNumber;
+    const session = getSession(userId);
+
+    if (!session || !session.isReady || !session.sock) {
+        return res.json({ success: false, error: 'WhatsApp não está conectado' });
+    }
+
+    try {
+        let jid;
+        if (targetNumber.includes('@lid')) {
+            const cleanedNumber = await cleanPhoneNumber(targetNumber, null, session);
+            jid = cleanedNumber.includes('@') ? cleanedNumber : `${cleanedNumber}@s.whatsapp.net`;
+        } else if (targetNumber.includes('@g.us')) {
+            jid = targetNumber;
+        } else {
+            jid = await resolveWhatsAppJid(targetNumber, session);
+        }
+
+        let videoBuffer;
+        let mimetype = 'video/mp4';
+
+        if (videoBase64) {
+            const matches = videoBase64.match(/^data:(.+);base64,(.+)$/);
+            if (matches) {
+                mimetype = matches[1];
+                videoBuffer = Buffer.from(matches[2], 'base64');
+            } else {
+                videoBuffer = Buffer.from(videoBase64, 'base64');
+            }
+        } else if (videoUrl) {
+            const vidRes = await fetch(videoUrl);
+            if (!vidRes.ok) throw new Error('Falha ao baixar vídeo');
+            const contentType = vidRes.headers.get('content-type');
+            if (contentType) mimetype = contentType;
+            const arrayBuffer = await vidRes.arrayBuffer();
+            videoBuffer = Buffer.from(arrayBuffer);
+        } else {
+            return res.json({ success: false, error: 'videoUrl ou videoBase64 é obrigatório' });
+        }
+
+        const sentMessage = await session.sock.sendMessage(jid, {
+            video: videoBuffer,
+            mimetype,
+            caption: caption || ''
+        });
+
+        const cleanJidNumber = jid.replace(/@.*$/, '');
+        const messageObj = {
+            id: sentMessage.key.id,
+            from: session.sock.user.id,
+            to: jid,
+            body: caption || '[Vídeo]',
+            type: 'video',
+            timestamp: Date.now(),
+            isFromMe: true,
+            contact: {
+                id: jid,
+                name: cleanJidNumber,
+                pushname: '',
+                number: cleanJidNumber
+            }
+        };
+
+        session.messagesList.unshift(messageObj);
+        if (session.messagesList.length > 100) session.messagesList.pop();
+
+        if (!session.chatMessages.has(jid)) session.chatMessages.set(jid, []);
+        const chatMsgs = session.chatMessages.get(jid);
+        chatMsgs.unshift(messageObj);
+        if (chatMsgs.length > 50) chatMsgs.pop();
+
+        sendEventToUserClients(userId, 'new_message', messageObj);
+        sendEventToUserClients(userId, 'chat_message_update', { chatId: jid, message: messageObj });
+
+        console.log(`✅ [${userId}] Vídeo enviado para ${jid}`);
+        res.json({ success: true, message: 'Vídeo enviado com sucesso' });
+    } catch (error) {
+        console.error(`❌ [${userId}] Erro ao enviar vídeo:`, error);
+        res.json({ success: false, error: 'Erro ao enviar vídeo: ' + (error.message || '') });
+    }
+});
+
 // User-specific send media (image, video, document) via URL
 app.post('/users/:userId/send-media', async (req, res) => {
     const { userId } = req.params;
