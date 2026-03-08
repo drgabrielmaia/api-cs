@@ -2663,6 +2663,51 @@ app.post('/users/:userId/send-image', async (req, res) => {
     }
 });
 
+// Check if phone number exists on WhatsApp
+app.post('/users/:userId/check-number', async (req, res) => {
+    const { userId } = req.params;
+    const { phone } = req.body;
+    const session = getSession(userId);
+
+    if (!session || !session.isReady || !session.sock) {
+        return res.json({ success: false, error: 'WhatsApp não está conectado' });
+    }
+
+    if (!phone) {
+        return res.json({ success: false, error: 'phone é obrigatório' });
+    }
+
+    try {
+        const variations = getBrazilianPhoneVariations(phone);
+        console.log(`🔍 [${userId}] Verificando número ${phone}, variações:`, variations);
+
+        if (session.sock.onWhatsApp) {
+            for (const variation of variations) {
+                try {
+                    const result = await session.sock.onWhatsApp(variation);
+                    if (result && result.length > 0 && result[0].exists) {
+                        console.log(`✅ [${userId}] Número encontrado: ${variation} → ${result[0].jid}`);
+                        return res.json({
+                            success: true,
+                            exists: true,
+                            jid: result[0].jid,
+                            number: variation
+                        });
+                    }
+                } catch (err) {
+                    // Continue testing next variation
+                }
+            }
+        }
+
+        console.log(`❌ [${userId}] Nenhuma variação encontrada no WhatsApp para ${phone}`);
+        res.json({ success: true, exists: false, jid: null, number: phone });
+    } catch (error) {
+        console.error(`❌ [${userId}] Erro ao verificar número:`, error);
+        res.json({ success: false, error: 'Erro ao verificar número: ' + (error.message || '') });
+    }
+});
+
 // User-specific send video (base64 or URL)
 app.post('/users/:userId/send-video', async (req, res) => {
     const { userId } = req.params;
