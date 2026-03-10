@@ -12,6 +12,10 @@ const multer = require('multer');
 // db.js provides supabase-compatible .from().select().eq() API
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { settingsManager } = require('./organization-settings');
+const { AutomationEngine } = require('./automation-engine');
+
+// Automation Engine instance
+const automationEngine = new AutomationEngine();
 
 // Storage para mapear @lid para números reais encontrados
 const lidToPhoneMap = new Map();
@@ -295,6 +299,9 @@ function addNotificationLog(type, message, data = {}) {
 // Conexão direta com PostgreSQL (substituiu Supabase)
 const supabase = require('./db');
 const { generateToken, authMiddleware } = require('./auth-middleware');
+
+// Initialize automation engine
+automationEngine.initialize(supabase, (id) => getSession(id));
 
 // ===== AUTH ROUTES =====
 
@@ -1288,40 +1295,123 @@ async function connectUserToWhatsApp(userId) {
 
     session.sock.ev.on('creds.update', saveCreds);
 
+    // =====================================================================
+    // CONTACTS.UPDATE - LID↔PN resolution + Profile Photo
+    // =====================================================================
+    session.sock.ev.on('contacts.update', async (updates) => {
+        for (const update of updates) {
+            try {
+                const jid = update.id;
+                if (!jid) continue;
+
+                // LID Resolution: Baileys sends contacts.update with PN info for LID contacts
+                if (jid.includes('@lid')) {
+                    // Check if update has a linked number property
+                    const possibleNumber = update.number || update.phone || update.phoneNumber;
+                    if (possibleNumber) {
+                        const cleanNumber = possibleNumber.replace(/\D/g, '');
+                        if (cleanNumber.length >= 10) {
+                            console.log(`🔗 [${userId}] contacts.update resolveu LID: ${jid} → ${cleanNumber}`);
+                            lidToPhoneMap.set(jid, cleanNumber);
+                            await saveLidMappingToDatabase(jid, cleanNumber);
+
+                            // Also save to wa_lid_mappings (new table)
+                            try {
+                                await supabase.query(
+                                    `INSERT INTO wa_lid_mappings (pn_jid, lid_jid, confidence, source)
+                                     VALUES ($1, $2, 'high', 'contacts_update')
+                                     ON CONFLICT (lid_jid) DO UPDATE SET pn_jid = $1, discovered_at = NOW()`,
+                                    [`${cleanNumber}@s.whatsapp.net`, jid]
+                                );
+                            } catch {}
+                        }
+                    }
+                }
+
+                // Profile Photo: fetch and store avatar_url
+                if (session.sock && session.isReady) {
+                    try {
+                        const ppUrl = await session.sock.profilePictureUrl(jid, 'image');
+                        if (ppUrl) {
+                            // Update wa_contacts avatar_url
+                            const contactPhone = jid.replace('@s.whatsapp.net', '').replace('@lid', '');
+                            const last9 = contactPhone.slice(-9);
+                            if (last9.length === 9) {
+                                await supabase.query(
+                                    `UPDATE wa_contacts SET avatar_url = $1, updated_at = NOW()
+                                     WHERE phone_number LIKE '%' || $2`,
+                                    [ppUrl, last9]
+                                );
+                            }
+                        }
+                    } catch {
+                        // Profile picture not available (privacy settings)
+                    }
+                }
+            } catch (err) {
+                console.log(`⚠️ [${userId}] Erro em contacts.update:`, err.message);
+            }
+        }
+    });
+
+    // =====================================================================
+    // CONTACTS.UPSERT - Bulk LID resolution from contact sync
+    // =====================================================================
+    session.sock.ev.on('contacts.upsert', async (contacts) => {
+        for (const contact of contacts) {
+            try {
+                const jid = contact.id;
+                if (!jid || !jid.includes('@lid')) continue;
+
+                // Try to extract real phone from contact properties
+                const realNumber = await extractRealPhoneNumber(contact, jid, session);
+                if (realNumber) {
+                    console.log(`🔗 [${userId}] contacts.upsert resolveu LID: ${jid} → ${realNumber}`);
+                    lidToPhoneMap.set(jid, realNumber);
+                    await saveLidMappingToDatabase(jid, realNumber);
+
+                    try {
+                        await supabase.query(
+                            `INSERT INTO wa_lid_mappings (pn_jid, lid_jid, confidence, source)
+                             VALUES ($1, $2, 'high', 'contacts_upsert')
+                             ON CONFLICT (lid_jid) DO UPDATE SET pn_jid = $1, discovered_at = NOW()`,
+                            [`${realNumber}@s.whatsapp.net`, jid]
+                        );
+                    } catch {}
+                }
+
+                // Fetch profile photo
+                if (session.sock && session.isReady) {
+                    try {
+                        const ppUrl = await session.sock.profilePictureUrl(jid, 'image');
+                        if (ppUrl) {
+                            const phone = realNumber || jid.replace('@lid', '');
+                            const last9 = phone.slice(-9);
+                            if (last9.length >= 9) {
+                                await supabase.query(
+                                    `UPDATE wa_contacts SET avatar_url = $1, updated_at = NOW()
+                                     WHERE phone_number LIKE '%' || $2`,
+                                    [ppUrl, last9]
+                                );
+                            }
+                        }
+                    } catch {}
+                }
+            } catch (err) {
+                console.log(`⚠️ [${userId}] Erro em contacts.upsert:`, err.message);
+            }
+        }
+    });
+
     session.sock.ev.on('messages.upsert', async ({ messages, type }) => {
         console.log(`🔥 [${userId}] EVENTO MESSAGES.UPSERT RECEBIDO!`);
         console.log(`📊 [${userId}] Número de mensagens:`, messages.length);
         console.log(`📊 [${userId}] Type:`, type);
 
-        // Filtrar apenas mensagens novas e reais
+        // Filtrar apenas mensagens novas e reais (sync filter)
         const validMessages = messages.filter(msg => {
-            // Ignorar mensagens sem conteúdo
             if (!msg.message) return false;
-            // Ignorar apenas status broadcasts
             if (msg.key.remoteJid === 'status@broadcast') return false;
-            
-            // ⭐ Debug e extração para @lid
-            if (msg.key.remoteJid && msg.key.remoteJid.includes('@lid')) {
-                console.log(`🔍 [${session.userId}] DEBUG @lid detectado:`, {
-                    remoteJid: msg.key.remoteJid,
-                    participant: msg.key.participant, // ⭐ ESTA É A CHAVE!
-                    pushName: msg.pushName,
-                    fromMe: msg.key.fromMe
-                });
-                
-                // ⭐ SOLUÇÃO 1: Verificar participant (principalmente em grupos)
-                if (msg.key.participant && msg.key.participant.includes('@s.whatsapp.net')) {
-                    const realNumber = msg.key.participant.replace('@s.whatsapp.net', '');
-                    console.log(`🎯 [${session.userId}] NÚMERO REAL ENCONTRADO no participant: ${realNumber}`);
-                    
-                    // Salvar mapeamento no cache
-                    lidToPhoneMap.set(msg.key.remoteJid, realNumber);
-                    
-                    // ⭐ SOLUÇÃO 3: Salvar no BD para próximas vezes
-                    saveLidMappingToDatabase(msg.key.remoteJid, realNumber);
-                }
-            }
-            // Ignorar mensagens com problemas de descriptografia
             if (msg.messageStubType) return false;
             return true;
         });
@@ -1331,6 +1421,101 @@ async function connectUserToWhatsApp(userId) {
         if (validMessages.length === 0) {
             console.log(`⚠️ [${userId}] Nenhuma mensagem válida para processar`);
             return;
+        }
+
+        // ⭐ Resolução LID melhorada (async, fora do filter)
+        for (const msg of validMessages) {
+            if (msg.key.remoteJid && msg.key.remoteJid.includes('@lid')) {
+                const lidJid = msg.key.remoteJid;
+                let resolvedNumber = null;
+
+                // 1. Cache em memória
+                if (lidToPhoneMap.has(lidJid)) {
+                    resolvedNumber = lidToPhoneMap.get(lidJid);
+                }
+
+                // 2. Participant (em grupos/chat)
+                if (!resolvedNumber && msg.key.participant && msg.key.participant.includes('@s.whatsapp.net')) {
+                    resolvedNumber = msg.key.participant.replace('@s.whatsapp.net', '');
+                }
+
+                // 3. wa_lid_mappings (tabela nova)
+                if (!resolvedNumber) {
+                    try {
+                        const dbMapping = await supabase.query(
+                            `SELECT pn_jid FROM wa_lid_mappings WHERE lid_jid = $1 LIMIT 1`,
+                            [lidJid]
+                        );
+                        if (dbMapping.rows[0]) {
+                            resolvedNumber = dbMapping.rows[0].pn_jid.replace('@s.whatsapp.net', '');
+                        }
+                    } catch {}
+                }
+
+                // 4. lid_phone_mappings (tabela legada)
+                if (!resolvedNumber) {
+                    const dbNumber = await getLidMappingFromDatabase(lidJid);
+                    if (dbNumber) resolvedNumber = dbNumber;
+                }
+
+                // 5. API do WhatsApp (onWhatsApp)
+                if (!resolvedNumber && session?.sock?.onWhatsApp) {
+                    try {
+                        const result = await session.sock.onWhatsApp(lidJid);
+                        if (result?.[0]?.jid?.includes('@s.whatsapp.net')) {
+                            resolvedNumber = result[0].jid.replace('@s.whatsapp.net', '');
+                        }
+                    } catch {}
+                }
+
+                // 6. Propriedades do contato (fallback)
+                if (!resolvedNumber) {
+                    resolvedNumber = await extractRealPhoneNumber(null, lidJid, session);
+                }
+
+                // Salvar resolução em todos os caches/bancos
+                if (resolvedNumber && resolvedNumber.length >= 10) {
+                    console.log(`🎯 [${session.userId}] LID resolvido: ${lidJid} → ${resolvedNumber}`);
+                    lidToPhoneMap.set(lidJid, resolvedNumber);
+                    saveLidMappingToDatabase(lidJid, resolvedNumber);
+
+                    try {
+                        await supabase.query(
+                            `INSERT INTO wa_lid_mappings (pn_jid, lid_jid, confidence, source)
+                             VALUES ($1, $2, 'high', 'message_resolution')
+                             ON CONFLICT (lid_jid) DO UPDATE SET pn_jid = $1, discovered_at = NOW()`,
+                            [`${resolvedNumber}@s.whatsapp.net`, lidJid]
+                        );
+                    } catch {}
+
+                    // Resolver/vincular wa_contact com lead/mentorado
+                    try {
+                        const orgId = await automationEngine.getOrgIdForSession(userId);
+                        await supabase.query(`SELECT resolve_wa_contact($1, $2, $3)`, [orgId, lidJid, msg.pushName || null]);
+                        const pnJid = `${resolvedNumber}@s.whatsapp.net`;
+                        await supabase.query(`SELECT resolve_wa_contact($1, $2, $3)`, [orgId, pnJid, msg.pushName || null]);
+                    } catch {}
+                } else {
+                    console.log(`⚠️ [${session.userId}] LID não resolvido: ${lidJid}`);
+                }
+
+                // Buscar foto de perfil (fire and forget)
+                if (session?.sock && session.isReady) {
+                    (async () => {
+                        try {
+                            const ppUrl = await session.sock.profilePictureUrl(lidJid, 'image');
+                            if (ppUrl && resolvedNumber) {
+                                const last9 = resolvedNumber.slice(-9);
+                                await supabase.query(
+                                    `UPDATE wa_contacts SET avatar_url = $1, updated_at = NOW()
+                                     WHERE phone_number LIKE '%' || $2`,
+                                    [ppUrl, last9]
+                                );
+                            }
+                        } catch {}
+                    })();
+                }
+            }
         }
 
         const message = validMessages[0];
@@ -1632,6 +1817,70 @@ async function connectUserToWhatsApp(userId) {
         const groupInfo = isGroup ? ` no grupo "${chatName}"` : '';
         const messageType = message.key.fromMe ? "ENVIADA" : "RECEBIDA";
         console.log(`📨 [${userId}] MENSAGEM ${messageType}${groupInfo}: ${messageText}`);
+
+        // =====================================================================
+        // AUTOMATION ENGINE: Disparar eventos de mensagem recebida
+        // =====================================================================
+        if (!message.key.fromMe && !isGroup && messageText) {
+            (async () => {
+                try {
+                    const orgId = await automationEngine.getOrgIdForSession(userId);
+                    const senderPhone = chatId.replace('@s.whatsapp.net', '').replace('@lid', '');
+                    const last9 = senderPhone.slice(-9);
+
+                    // Resolver contactId
+                    let contactId = null;
+                    try {
+                        const contactResult = await supabase.query(
+                            `SELECT id FROM wa_contacts WHERE organization_id = $1 AND phone_number LIKE '%' || $2 AND is_active = true LIMIT 1`,
+                            [orgId, last9]
+                        );
+                        contactId = contactResult.rows[0]?.id || null;
+                    } catch {}
+
+                    const eventData = {
+                        contactId,
+                        instanceId: userId,
+                        chatId,
+                        messageText,
+                        senderJid: chatId,
+                        senderPhone,
+                        pushName: message.pushName || ''
+                    };
+
+                    // Disparar evento message_received
+                    automationEngine.handleEvent(orgId, 'message_received', eventData);
+
+                    // Disparar keyword_detected (as mesmas automações com keywords)
+                    automationEngine.handleEvent(orgId, 'keyword_detected', eventData);
+
+                    // Se tem reply pendente, processar
+                    if (contactId) {
+                        automationEngine.handleIncomingReply(orgId, contactId, messageText);
+                    }
+                } catch (autoErr) {
+                    console.error(`⚠️ [AutomationEngine] Erro ao disparar evento:`, autoErr.message);
+                }
+            })();
+        }
+
+        // Buscar foto de perfil para contatos normais (@s.whatsapp.net)
+        if (!isGroup && chatId.includes('@s.whatsapp.net') && !message.key.fromMe) {
+            (async () => {
+                try {
+                    const ppUrl = await session.sock.profilePictureUrl(chatId, 'image');
+                    if (ppUrl) {
+                        const phone = chatId.replace('@s.whatsapp.net', '');
+                        const last9 = phone.slice(-9);
+                        await supabase.query(
+                            `UPDATE wa_contacts SET avatar_url = $1, updated_at = NOW()
+                             WHERE phone_number LIKE '%' || $2 AND (avatar_url IS NULL OR avatar_url != $1)`,
+                            [ppUrl, last9]
+                        );
+                    }
+                } catch {}
+            })();
+        }
 
         // SDR ANTIPLANTÃO - DESATIVADO
         if (false && !message.key.fromMe && messageText && messageText.length > 0 && !isGroup) {
@@ -4790,11 +5039,17 @@ function setupCronJobs() {
 
     // Follow-up CRON antigo removido — usando processFollowupsForAllOrganizations
 
+    // Automation Engine: processar jobs agendados a cada 30 segundos
+    cron.schedule('*/30 * * * * *', () => {
+        automationEngine.processScheduledJobs();
+    });
+
     console.log('⏰ Cron jobs configurados:');
     console.log('   - Verificação de lembretes a cada 2 minutos (30min antes)');
     console.log('   - Resumo diário às 7h UTC (10h São Paulo)');
     console.log('   - Cleanup de stories expirados a cada 6 horas');
     console.log('   - Follow-up automático a cada 30 segundos (via processFollowupsForAllOrganizations)');
+    console.log('   - Automation Engine: jobs agendados a cada 30 segundos');
 
     // 🧪 TESTE IMEDIATO DO RESUMO DIÁRIO
     console.log('🧪 EXECUTANDO TESTE IMEDIATO DO RESUMO DIÁRIO...');
@@ -7326,6 +7581,122 @@ app.get('/api/wa/automations/:autoId/executions', authMiddleware, async (req, re
     }
 });
 
+// --- AUTOMATION TRIGGER (external events) ---
+app.post('/api/wa/automations/trigger', authMiddleware, async (req, res) => {
+    try {
+        const { organization_id } = req.user;
+        const { event_type, event_data } = req.body;
+
+        if (!event_type) {
+            return res.status(400).json({ success: false, error: 'event_type is required' });
+        }
+
+        // Fire-and-forget
+        automationEngine.handleEvent(organization_id, event_type, event_data || {});
+
+        res.json({ success: true, message: `Evento ${event_type} disparado` });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// --- FETCH PROFILE PHOTO ---
+app.post('/api/wa/contacts/:contactId/fetch-photo', authMiddleware, async (req, res) => {
+    try {
+        const { contactId } = req.params;
+        const { organization_id } = req.user;
+
+        // Get contact's JIDs
+        const identResult = await supabase.query(
+            `SELECT ci.jid FROM contact_identifiers ci
+             JOIN wa_contacts wc ON wc.id = ci.contact_id
+             WHERE ci.contact_id = $1 AND wc.organization_id = $2`,
+            [contactId, organization_id]
+        );
+
+        if (identResult.rows.length === 0) {
+            return res.status(404).json({ success: false, error: 'Contato não encontrado' });
+        }
+
+        // Try to fetch profile photo from any connected session
+        let photoUrl = null;
+        for (const [, session] of userSessions) {
+            if (session?.sock && session.isReady) {
+                for (const row of identResult.rows) {
+                    try {
+                        photoUrl = await session.sock.profilePictureUrl(row.jid, 'image');
+                        if (photoUrl) break;
+                    } catch {}
+                }
+                if (photoUrl) break;
+            }
+        }
+
+        if (photoUrl) {
+            await supabase.query(
+                `UPDATE wa_contacts SET avatar_url = $1, updated_at = NOW() WHERE id = $2`,
+                [photoUrl, contactId]
+            );
+            res.json({ success: true, avatar_url: photoUrl });
+        } else {
+            res.json({ success: false, error: 'Foto não disponível (privacidade do contato)' });
+        }
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// --- LID RESOLVE ENDPOINT ---
+app.post('/api/wa/resolve-lid', authMiddleware, async (req, res) => {
+    try {
+        const { lid_jid } = req.body;
+        if (!lid_jid) return res.status(400).json({ success: false, error: 'lid_jid required' });
+
+        // 1. Check memory cache
+        if (lidToPhoneMap.has(lid_jid)) {
+            return res.json({ success: true, phone: lidToPhoneMap.get(lid_jid), source: 'cache' });
+        }
+
+        // 2. Check wa_lid_mappings
+        const dbResult = await supabase.query(
+            `SELECT pn_jid FROM wa_lid_mappings WHERE lid_jid = $1 LIMIT 1`,
+            [lid_jid]
+        );
+        if (dbResult.rows[0]) {
+            const phone = dbResult.rows[0].pn_jid.replace('@s.whatsapp.net', '');
+            lidToPhoneMap.set(lid_jid, phone);
+            return res.json({ success: true, phone, source: 'database' });
+        }
+
+        // 3. Try API resolution via any connected session
+        for (const [, session] of userSessions) {
+            if (session?.sock?.onWhatsApp && session.isReady) {
+                try {
+                    const result = await session.sock.onWhatsApp(lid_jid);
+                    if (result?.[0]?.jid?.includes('@s.whatsapp.net')) {
+                        const phone = result[0].jid.replace('@s.whatsapp.net', '');
+                        lidToPhoneMap.set(lid_jid, phone);
+                        await saveLidMappingToDatabase(lid_jid, phone);
+                        try {
+                            await supabase.query(
+                                `INSERT INTO wa_lid_mappings (pn_jid, lid_jid, confidence, source)
+                                 VALUES ($1, $2, 'high', 'api_resolve_endpoint')
+                                 ON CONFLICT (lid_jid) DO UPDATE SET pn_jid = $1`,
+                                [`${phone}@s.whatsapp.net`, lid_jid]
+                            );
+                        } catch {}
+                        return res.json({ success: true, phone, source: 'whatsapp_api' });
+                    }
+                } catch {}
+            }
+        }
+
+        res.json({ success: false, error: 'Não foi possível resolver o LID' });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // --- PIPELINE STAGES ---
 app.get('/api/wa/pipeline-stages', authMiddleware, async (req, res) => {
     try {
@@ -7449,6 +7820,7 @@ app.listen(port, async () => {
     console.log(`📱 Acesse https://api.medicosderesultado.com.br para ver o status`);
     console.log(`🔧 Endpoints: /users/{userId}/register para registrar novos usuários`);
     console.log(`🎯 Resolver LID: POST /resolve-lid, GET /lid-mappings`);
+
     console.log(`📸 Instagram webhook: GET/POST /instagram-webhook`);
     console.log(`🔐 Variáveis necessárias: INSTAGRAM_APP_SECRET, INSTAGRAM_VERIFY_TOKEN`);
 
