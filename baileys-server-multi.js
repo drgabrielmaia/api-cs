@@ -185,6 +185,135 @@ function convertPhoneToLid(phoneNumber) {
     return phoneNumber; // Retorna original se não encontrar
 }
 
+// ─── Gerador de Agenda (server-side) ───────────────────────────
+const WEEKDAY_NAMES = {
+    0: 'DOMINGO', 1: 'SEGUNDA-FEIRA', 2: 'TERÇA-FEIRA', 3: 'QUARTA-FEIRA',
+    4: 'QUINTA-FEIRA', 5: 'SEXTA-FEIRA', 6: 'SÁBADO'
+};
+
+function getTemperaturaTag(temp) {
+    if (!temp) return '';
+    const t = temp.toLowerCase();
+    if (t === 'quente') return '🔥 Quente';
+    if (t === 'morno') return '🟡 Morno';
+    if (t === 'frio') return '❄️ Frio';
+    if (t === 'elite') return '⭐ Elite';
+    return temp;
+}
+
+function formatOrigemServer(origem, fonteDetalhada) {
+    const src = fonteDetalhada || origem;
+    if (!src) return '';
+    const s = src.toLowerCase();
+    if (s.includes('instagram') || s.includes('insta')) return 'Insta';
+    if (s.includes('indica')) return 'Indicação';
+    if (s.includes('google')) return 'Google';
+    if (s.includes('facebook') || s.includes('fb')) return 'Facebook';
+    if (s.includes('tiktok')) return 'TikTok';
+    if (s.includes('youtube')) return 'YouTube';
+    if (s.includes('site')) return 'Site';
+    return src.length > 15 ? src.slice(0, 12) + '...' : src;
+}
+
+function formatTimeServer(dateStr) {
+    return new Date(dateStr).toLocaleTimeString('pt-BR', {
+        hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo'
+    });
+}
+
+function formatEventLineServer(ev) {
+    const time = formatTimeServer(ev.start_datetime);
+    if (ev.lead_id && ev.lead_nome) {
+        const tags = [];
+        const origem = formatOrigemServer(ev.lead_origem, ev.lead_fonte);
+        const temp = getTemperaturaTag(ev.lead_temp);
+        if (origem) tags.push(origem);
+        if (temp) tags.push(temp);
+        const info = tags.length > 0 ? ` _(${tags.join(' · ')})_` : '';
+        return `   💰 *${time}* — ${ev.lead_nome}${info}`;
+    }
+    if (ev.mentorado_id && ev.mentorado_nome) {
+        return `   🎯 *${time}* — ${ev.mentorado_nome} _(Onboarding)_`;
+    }
+    return `   📋 *${time}* — ${ev.title}`;
+}
+
+async function generateAgendaMessage(orgId, isWeekly) {
+    const now = new Date();
+    let startDate, endDate;
+
+    if (isWeekly) {
+        const monday = new Date(now);
+        const dow = monday.getDay();
+        const diff = dow === 0 ? -6 : 1 - dow;
+        monday.setDate(monday.getDate() + diff);
+        monday.setHours(0, 0, 0, 0);
+        const sunday = new Date(monday);
+        sunday.setDate(monday.getDate() + 6);
+        startDate = monday;
+        endDate = sunday;
+    } else {
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+        endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+    }
+
+    const { rows: events } = await supabase.query(
+        `SELECT ce.id, ce.title, ce.start_datetime, ce.end_datetime, ce.all_day,
+                ce.lead_id, ce.mentorado_id, ce.call_status,
+                l.nome_completo as lead_nome, l.temperatura as lead_temp, l.origem as lead_origem, l.fonte_detalhada as lead_fonte,
+                m.nome_completo as mentorado_nome
+         FROM calendar_events ce
+         LEFT JOIN leads l ON ce.lead_id = l.id
+         LEFT JOIN mentorados m ON ce.mentorado_id = m.id
+         WHERE ce.organization_id = $1
+           AND ce.start_datetime >= $2
+           AND ce.start_datetime <= $3
+         ORDER BY ce.start_datetime ASC`,
+        [orgId, startDate.toISOString(), endDate.toISOString()]
+    );
+
+    const title = isWeekly ? 'AGENDA DA SEMANA' : 'AGENDA DO DIA';
+
+    if (!events || events.length === 0) {
+        if (isWeekly) {
+            return `📅 *${title}*\n\nSem eventos agendados para esta semana.`;
+        }
+        const dayName = WEEKDAY_NAMES[now.getDay()];
+        const dayNum = now.getDate().toString().padStart(2, '0');
+        const month = (now.getMonth() + 1).toString().padStart(2, '0');
+        return `📅 *${title}*\n\n*📌 ${dayName} — ${dayNum}/${month}*\n   Sem eventos agendados para hoje.`;
+    }
+
+    const totalEvents = events.length;
+    let msg = `📅 *${title}*\n_${totalEvents} evento${totalEvents > 1 ? 's' : ''} agendado${totalEvents > 1 ? 's' : ''}_\n`;
+
+    if (isWeekly) {
+        for (let i = 0; i < 7; i++) {
+            const day = new Date(startDate);
+            day.setDate(startDate.getDate() + i);
+            const dayEvents = events.filter(e => {
+                const d = new Date(e.start_datetime);
+                return d.getFullYear() === day.getFullYear() && d.getMonth() === day.getMonth() && d.getDate() === day.getDate();
+            });
+            if (dayEvents.length > 0) {
+                const dayName = WEEKDAY_NAMES[day.getDay()];
+                const dayNum = day.getDate().toString().padStart(2, '0');
+                const month = (day.getMonth() + 1).toString().padStart(2, '0');
+                msg += `\n*📌 ${dayName} — ${dayNum}/${month}*\n`;
+                dayEvents.forEach(ev => { msg += `${formatEventLineServer(ev)}\n`; });
+            }
+        }
+    } else {
+        const dayName = WEEKDAY_NAMES[now.getDay()];
+        const dayNum = now.getDate().toString().padStart(2, '0');
+        const month = (now.getMonth() + 1).toString().padStart(2, '0');
+        msg += `\n*📌 ${dayName} — ${dayNum}/${month}*\n`;
+        events.forEach(ev => { msg += `${formatEventLineServer(ev)}\n`; });
+    }
+
+    return msg.trim();
+}
+
 // Função para limpar número de telefone de sufixos WhatsApp e extrair número real
 async function cleanPhoneNumber(phoneId, contact = null, session = null) {
     if (!phoneId) return '';
@@ -1553,6 +1682,33 @@ async function connectUserToWhatsApp(userId) {
         if (messageAge > 3600000) { // 1 hora
             console.log(`⏰ [${userId}] Mensagem muito antiga (${Math.round(messageAge/60000)} min), ignorando`);
             return;
+        }
+
+        // ========================
+        // AUTO-RESPOSTA: AGENDA DA SEMANA / AGENDA DO DIA
+        // ========================
+        if (!message.key.fromMe && isGroup) {
+            const msgLower = messageText.trim().toLowerCase();
+            if (msgLower === 'agenda da semana' || msgLower === 'agenda do dia') {
+                try {
+                    // Verificar se este grupo está vinculado a alguma organização
+                    const { rows: orgRows } = await supabase.query(
+                        `SELECT id FROM organizations WHERE whatsapp_group_agenda = $1 LIMIT 1`,
+                        [chatId]
+                    );
+                    if (orgRows.length > 0) {
+                        const orgId = orgRows[0].id;
+                        const isWeekly = msgLower === 'agenda da semana';
+                        console.log(`📅 [${userId}] Auto-agenda: "${msgLower}" no grupo ${chatId} (org: ${orgId})`);
+
+                        const agenda = await generateAgendaMessage(orgId, isWeekly);
+                        await session.sock.sendMessage(chatId, { text: agenda });
+                        console.log(`✅ [${userId}] Agenda enviada ao grupo`);
+                    }
+                } catch (agendaErr) {
+                    console.error(`❌ [${userId}] Erro ao gerar agenda automática:`, agendaErr.message);
+                }
+            }
         }
 
         // ========================
