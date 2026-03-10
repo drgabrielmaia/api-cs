@@ -735,7 +735,7 @@ app.post('/api/query', (req, res, next) => {
 // =====================================================================
 // POST /api/rpc/:name - RPC proxy for stored procedures
 // =====================================================================
-app.post('/api/rpc/:name', authMiddleware, async (req, res) => {
+app.post('/api/rpc/:name', async (req, res) => {
     try {
         const name = req.params.name.replace(/[^a-zA-Z0-9_]/g, '');
         const params = req.body || {};
