@@ -6730,6 +6730,719 @@ app.get('/public/mentorados/validate/:id', async (req, res) => {
     }
 });
 
+// =====================================================================
+// WHATSAPP SYSTEM V2 - Multi-Instance, Identity Resolution, Enriched Contacts
+// =====================================================================
+
+// --- INSTANCES ---
+app.get('/api/wa/instances', authMiddleware, async (req, res) => {
+    try {
+        const { organization_id } = req.user;
+        const result = await supabase.query(
+            `SELECT wi.*,
+                (SELECT COUNT(*) FROM wa_chats wc WHERE wc.instance_id = wi.id AND wc.status = 'open') as open_chats
+             FROM whatsapp_instances wi
+             WHERE wi.organization_id = $1
+             ORDER BY wi.created_at`,
+            [organization_id]
+        );
+
+        // Enrich with live status from sessions
+        const instances = result.rows.map(inst => {
+            const session = getSession(inst.id) || getSession('user_' + inst.id);
+            return {
+                ...inst,
+                live_status: session?.isReady ? 'connected' : (session?.isConnecting ? 'connecting' : 'disconnected'),
+                has_qr: !!(session?.qrCodeData)
+            };
+        });
+
+        res.json({ success: true, data: instances });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/wa/instances', authMiddleware, async (req, res) => {
+    try {
+        const { organization_id } = req.user;
+        const { name, department, description } = req.body;
+
+        const result = await supabase.query(
+            `INSERT INTO whatsapp_instances (organization_id, name, department, description, session_path)
+             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+            [organization_id, name, department || null, description || null, `user_${organization_id}_${name.toLowerCase().replace(/\s+/g, '_')}`]
+        );
+
+        res.json({ success: true, data: result.rows[0] });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/wa/instances/:instanceId/connect', authMiddleware, async (req, res) => {
+    try {
+        const { instanceId } = req.params;
+        const sessionId = instanceId;
+
+        await supabase.query(
+            `UPDATE whatsapp_instances SET status = 'connecting', updated_at = NOW() WHERE id = $1`,
+            [instanceId]
+        );
+
+        await connectUserToWhatsApp(sessionId);
+        res.json({ success: true, message: 'Connecting...' });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/wa/instances/:instanceId/disconnect', authMiddleware, async (req, res) => {
+    try {
+        const { instanceId } = req.params;
+        const session = getSession(instanceId);
+        if (session?.sock) {
+            await session.sock.logout();
+        }
+        deleteSession(instanceId);
+
+        await supabase.query(
+            `UPDATE whatsapp_instances SET status = 'disconnected', updated_at = NOW() WHERE id = $1`,
+            [instanceId]
+        );
+
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// --- IDENTITY RESOLUTION ---
+app.post('/api/wa/resolve-identity', authMiddleware, async (req, res) => {
+    try {
+        const { organization_id } = req.user;
+        const { jid, display_name, instance_id } = req.body;
+
+        const result = await supabase.query(
+            `SELECT resolve_wa_contact($1, $2, $3, $4) as contact_id`,
+            [organization_id, jid, display_name || null, instance_id || null]
+        );
+
+        const contactId = result.rows[0]?.contact_id;
+
+        // Get enriched data
+        const enriched = await supabase.query(
+            `SELECT get_wa_contact_enriched($1) as data`,
+            [contactId]
+        );
+
+        res.json({ success: true, contact_id: contactId, data: enriched.rows[0]?.data });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/wa/merge-contacts', authMiddleware, async (req, res) => {
+    try {
+        const { organization_id } = req.user;
+        const { keep_contact_id, merge_contact_id, reason } = req.body;
+
+        await supabase.query(
+            `SELECT merge_wa_contacts($1, $2, $3, $4, $5)`,
+            [organization_id, keep_contact_id, merge_contact_id, reason || 'manual_merge', req.user.email || 'user']
+        );
+
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/wa/pending-identities', authMiddleware, async (req, res) => {
+    try {
+        const { organization_id } = req.user;
+        const result = await supabase.query(
+            `SELECT wc.*,
+                json_agg(json_build_object('jid', ci.jid, 'jid_type', ci.jid_type)) as identifiers
+             FROM wa_contacts wc
+             LEFT JOIN contact_identifiers ci ON ci.contact_id = wc.id
+             WHERE wc.organization_id = $1 AND wc.identity_status = 'pending_resolution'
+             GROUP BY wc.id
+             ORDER BY wc.created_at DESC`,
+            [organization_id]
+        );
+        res.json({ success: true, data: result.rows });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// --- ENRICHED CONTACTS ---
+app.get('/api/wa/contacts', authMiddleware, async (req, res) => {
+    try {
+        const { organization_id } = req.user;
+        const { search, has_lead, has_mentorado, tag, stage, limit: lim } = req.query;
+
+        let sql = `
+            SELECT wc.*,
+                l.nome_completo as lead_nome, l.status as lead_status, l.temperatura as lead_temperatura,
+                l.valor_vendido as lead_valor_vendido, l.valor_arrecadado as lead_valor_arrecadado,
+                m.nome_completo as mentorado_nome, m.status as mentorado_status, m.turma as mentorado_turma,
+                (SELECT COALESCE(SUM(CASE WHEN d.status IN ('pendente','atrasado') THEN d.valor ELSE 0 END), 0)
+                 FROM dividas d WHERE d.mentorado_id = wc.mentorado_id) as valor_pendente,
+                (SELECT COUNT(*) FROM dividas d WHERE d.mentorado_id = wc.mentorado_id AND d.status = 'atrasado') as dividas_atrasadas
+            FROM wa_contacts wc
+            LEFT JOIN leads l ON l.id = wc.lead_id
+            LEFT JOIN mentorados m ON m.id = wc.mentorado_id
+            WHERE wc.organization_id = $1 AND wc.is_active = true`;
+
+        const params = [organization_id];
+        let paramIdx = 2;
+
+        if (search) {
+            sql += ` AND (wc.display_name ILIKE $${paramIdx} OR wc.phone_number ILIKE $${paramIdx} OR l.nome_completo ILIKE $${paramIdx})`;
+            params.push(`%${search}%`);
+            paramIdx++;
+        }
+        if (has_lead === 'true') sql += ` AND wc.lead_id IS NOT NULL`;
+        if (has_mentorado === 'true') sql += ` AND wc.mentorado_id IS NOT NULL`;
+        if (tag) {
+            sql += ` AND $${paramIdx} = ANY(wc.tags)`;
+            params.push(tag);
+            paramIdx++;
+        }
+        if (stage) {
+            sql += ` AND wc.pipeline_stage = $${paramIdx}`;
+            params.push(stage);
+            paramIdx++;
+        }
+
+        sql += ` ORDER BY wc.updated_at DESC LIMIT $${paramIdx}`;
+        params.push(parseInt(lim) || 100);
+
+        const result = await supabase.query(sql, params);
+        res.json({ success: true, data: result.rows });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/wa/contacts/:contactId/enriched', authMiddleware, async (req, res) => {
+    try {
+        const { contactId } = req.params;
+
+        const enriched = await supabase.query(
+            `SELECT get_wa_contact_enriched($1) as data`,
+            [contactId]
+        );
+
+        // Get notes
+        const notes = await supabase.query(
+            `SELECT * FROM wa_contact_notes WHERE contact_id = $1 ORDER BY created_at DESC LIMIT 50`,
+            [contactId]
+        );
+
+        // Get history
+        const history = await supabase.query(
+            `SELECT * FROM wa_contact_history WHERE contact_id = $1 ORDER BY created_at DESC LIMIT 50`,
+            [contactId]
+        );
+
+        // Get dividas details if mentorado
+        const contact = await supabase.query(`SELECT mentorado_id FROM wa_contacts WHERE id = $1`, [contactId]);
+        let dividas = [];
+        if (contact.rows[0]?.mentorado_id) {
+            const divResult = await supabase.query(
+                `SELECT * FROM dividas WHERE mentorado_id = $1 ORDER BY data_vencimento DESC`,
+                [contact.rows[0].mentorado_id]
+            );
+            dividas = divResult.rows;
+        }
+
+        res.json({
+            success: true,
+            data: enriched.rows[0]?.data,
+            notes: notes.rows,
+            history: history.rows,
+            dividas
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// --- CONTACT NOTES ---
+app.post('/api/wa/contacts/:contactId/notes', authMiddleware, async (req, res) => {
+    try {
+        const { contactId } = req.params;
+        const { organization_id } = req.user;
+        const { content, note_type, priority } = req.body;
+
+        const result = await supabase.query(
+            `INSERT INTO wa_contact_notes (contact_id, organization_id, content, note_type, priority, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+            [contactId, organization_id, content, note_type || 'geral', priority || 'normal', req.user.user_id]
+        );
+
+        res.json({ success: true, data: result.rows[0] });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// --- CONTACT TAGS & STAGE ---
+app.post('/api/wa/contacts/:contactId/tags', authMiddleware, async (req, res) => {
+    try {
+        const { contactId } = req.params;
+        const { tag, action } = req.body; // action: 'add' or 'remove'
+
+        if (action === 'remove') {
+            await supabase.query(
+                `UPDATE wa_contacts SET tags = array_remove(tags, $1), updated_at = NOW() WHERE id = $2`,
+                [tag, contactId]
+            );
+        } else {
+            await supabase.query(
+                `UPDATE wa_contacts SET tags = array_append(tags, $1), updated_at = NOW() WHERE id = $2 AND NOT ($1 = ANY(tags))`,
+                [tag, contactId]
+            );
+        }
+
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.put('/api/wa/contacts/:contactId/stage', authMiddleware, async (req, res) => {
+    try {
+        const { contactId } = req.params;
+        const { stage } = req.body;
+
+        await supabase.query(
+            `UPDATE wa_contacts SET pipeline_stage = $1, updated_at = NOW() WHERE id = $2`,
+            [stage, contactId]
+        );
+
+        // Log history
+        await supabase.query(
+            `INSERT INTO wa_contact_history (contact_id, organization_id, action, description, actor_type, actor_id)
+             SELECT $1, organization_id, 'stage_changed', $3, 'user', $4 FROM wa_contacts WHERE id = $1`,
+            [contactId, null, `Estágio alterado para: ${stage}`, req.user.email]
+        );
+
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// --- CHATS ---
+app.get('/api/wa/chats', authMiddleware, async (req, res) => {
+    try {
+        const { organization_id } = req.user;
+        const { instance_id, status, assigned_to, search, limit: lim } = req.query;
+
+        let sql = `
+            SELECT wch.*,
+                wc.display_name as contact_name, wc.phone_number as contact_phone,
+                wc.tags as contact_tags, wc.pipeline_stage as contact_stage,
+                wc.lead_id, wc.mentorado_id, wc.avatar_url,
+                l.nome_completo as lead_nome, l.status as lead_status, l.temperatura as lead_temp,
+                l.valor_vendido, l.valor_arrecadado,
+                m.nome_completo as mentorado_nome, m.status as mentorado_status,
+                wi.name as instance_name, wi.department as instance_dept,
+                (SELECT COALESCE(SUM(CASE WHEN d.status IN ('pendente','atrasado') THEN d.valor ELSE 0 END), 0)
+                 FROM dividas d WHERE d.mentorado_id = wc.mentorado_id) as total_pendente,
+                (SELECT COUNT(*) FROM dividas d WHERE d.mentorado_id = wc.mentorado_id AND d.status = 'atrasado') as dividas_atrasadas
+            FROM wa_chats wch
+            JOIN wa_contacts wc ON wc.id = wch.contact_id
+            JOIN whatsapp_instances wi ON wi.id = wch.instance_id
+            LEFT JOIN leads l ON l.id = wc.lead_id
+            LEFT JOIN mentorados m ON m.id = wc.mentorado_id
+            WHERE wch.organization_id = $1`;
+
+        const params = [organization_id];
+        let paramIdx = 2;
+
+        if (instance_id) {
+            sql += ` AND wch.instance_id = $${paramIdx}`;
+            params.push(instance_id);
+            paramIdx++;
+        }
+        if (status) {
+            sql += ` AND wch.status = $${paramIdx}`;
+            params.push(status);
+            paramIdx++;
+        }
+        if (assigned_to) {
+            sql += ` AND wch.assigned_to = $${paramIdx}`;
+            params.push(assigned_to);
+            paramIdx++;
+        }
+        if (search) {
+            sql += ` AND (wc.display_name ILIKE $${paramIdx} OR wc.phone_number ILIKE $${paramIdx} OR l.nome_completo ILIKE $${paramIdx})`;
+            params.push(`%${search}%`);
+            paramIdx++;
+        }
+
+        sql += ` ORDER BY wch.last_message_at DESC NULLS LAST LIMIT $${paramIdx}`;
+        params.push(parseInt(lim) || 50);
+
+        const result = await supabase.query(sql, params);
+        res.json({ success: true, data: result.rows });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/wa/chats/:chatId/messages', authMiddleware, async (req, res) => {
+    try {
+        const { chatId } = req.params;
+        const { limit: lim, before } = req.query;
+
+        let sql = `SELECT * FROM wa_messages WHERE chat_id = $1`;
+        const params = [chatId];
+        let paramIdx = 2;
+
+        if (before) {
+            sql += ` AND created_at < $${paramIdx}`;
+            params.push(before);
+            paramIdx++;
+        }
+
+        sql += ` ORDER BY created_at DESC LIMIT $${paramIdx}`;
+        params.push(parseInt(lim) || 50);
+
+        const result = await supabase.query(sql, params);
+        res.json({ success: true, data: result.rows.reverse() });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// --- AUTOMATIONS CRUD ---
+app.get('/api/wa/automations', authMiddleware, async (req, res) => {
+    try {
+        const { organization_id } = req.user;
+        const result = await supabase.query(
+            `SELECT a.*,
+                (SELECT json_agg(t.*) FROM wa_automation_triggers t WHERE t.automation_id = a.id) as triggers,
+                (SELECT json_agg(c.* ORDER BY c.order_index) FROM wa_automation_conditions c WHERE c.automation_id = a.id) as conditions,
+                (SELECT json_agg(ac.* ORDER BY ac.order_index) FROM wa_automation_actions ac WHERE ac.automation_id = a.id) as actions,
+                (SELECT COUNT(*) FROM wa_automation_executions e WHERE e.automation_id = a.id AND e.started_at > NOW() - INTERVAL '24 hours') as executions_24h,
+                (SELECT COUNT(*) FROM wa_automation_executions e WHERE e.automation_id = a.id AND e.status = 'failed' AND e.started_at > NOW() - INTERVAL '24 hours') as failures_24h
+             FROM wa_automations a
+             WHERE a.organization_id = $1
+             ORDER BY a.priority, a.name`,
+            [organization_id]
+        );
+        res.json({ success: true, data: result.rows });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/wa/automations', authMiddleware, async (req, res) => {
+    try {
+        const { organization_id } = req.user;
+        const { name, description, priority, scope, instance_ids, conflict_mode, trigger, conditions, actions } = req.body;
+
+        // Create automation
+        const autoResult = await supabase.query(
+            `INSERT INTO wa_automations (organization_id, name, description, priority, scope, instance_ids, conflict_mode, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+            [organization_id, name, description, priority || 100, scope || 'global', instance_ids || '{}', conflict_mode || 'continue', req.user.user_id]
+        );
+
+        const automationId = autoResult.rows[0].id;
+
+        // Create trigger
+        if (trigger) {
+            await supabase.query(
+                `INSERT INTO wa_automation_triggers (automation_id, trigger_type, config)
+                 VALUES ($1, $2, $3)`,
+                [automationId, trigger.type, JSON.stringify(trigger.config || {})]
+            );
+        }
+
+        // Create conditions
+        if (conditions && conditions.length > 0) {
+            for (let i = 0; i < conditions.length; i++) {
+                const c = conditions[i];
+                await supabase.query(
+                    `INSERT INTO wa_automation_conditions (automation_id, order_index, condition_type, operator, config, logic_gate)
+                     VALUES ($1, $2, $3, $4, $5, $6)`,
+                    [automationId, i, c.type, c.operator || 'eq', JSON.stringify(c.config || {}), c.logic_gate || 'AND']
+                );
+            }
+        }
+
+        // Create actions
+        if (actions && actions.length > 0) {
+            for (let i = 0; i < actions.length; i++) {
+                const a = actions[i];
+                await supabase.query(
+                    `INSERT INTO wa_automation_actions (automation_id, order_index, action_type, config)
+                     VALUES ($1, $2, $3, $4)`,
+                    [automationId, i, a.type, JSON.stringify(a.config || {})]
+                );
+            }
+        }
+
+        // Save version
+        await supabase.query(
+            `INSERT INTO wa_automation_versions (automation_id, version, trigger_snapshot, conditions_snapshot, actions_snapshot, created_by, change_description)
+             VALUES ($1, 1, $2, $3, $4, $5, 'Criação inicial')`,
+            [automationId, JSON.stringify(trigger), JSON.stringify(conditions), JSON.stringify(actions), req.user.user_id]
+        );
+
+        res.json({ success: true, data: autoResult.rows[0] });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.put('/api/wa/automations/:autoId', authMiddleware, async (req, res) => {
+    try {
+        const { autoId } = req.params;
+        const { name, description, is_active, priority, scope, instance_ids, conflict_mode, trigger, conditions, actions } = req.body;
+
+        // Update main record
+        const currentVersion = await supabase.query(`SELECT version FROM wa_automations WHERE id = $1`, [autoId]);
+        const newVersion = (currentVersion.rows[0]?.version || 0) + 1;
+
+        await supabase.query(
+            `UPDATE wa_automations SET name=$2, description=$3, is_active=$4, priority=$5, scope=$6, instance_ids=$7, conflict_mode=$8, version=$9, updated_at=NOW()
+             WHERE id = $1`,
+            [autoId, name, description, is_active, priority, scope, instance_ids || '{}', conflict_mode, newVersion]
+        );
+
+        // Replace trigger, conditions, actions
+        if (trigger) {
+            await supabase.query(`DELETE FROM wa_automation_triggers WHERE automation_id = $1`, [autoId]);
+            await supabase.query(
+                `INSERT INTO wa_automation_triggers (automation_id, trigger_type, config) VALUES ($1, $2, $3)`,
+                [autoId, trigger.type, JSON.stringify(trigger.config || {})]
+            );
+        }
+
+        if (conditions) {
+            await supabase.query(`DELETE FROM wa_automation_conditions WHERE automation_id = $1`, [autoId]);
+            for (let i = 0; i < conditions.length; i++) {
+                const c = conditions[i];
+                await supabase.query(
+                    `INSERT INTO wa_automation_conditions (automation_id, order_index, condition_type, operator, config, logic_gate)
+                     VALUES ($1, $2, $3, $4, $5, $6)`,
+                    [autoId, i, c.type, c.operator || 'eq', JSON.stringify(c.config || {}), c.logic_gate || 'AND']
+                );
+            }
+        }
+
+        if (actions) {
+            await supabase.query(`DELETE FROM wa_automation_actions WHERE automation_id = $1`, [autoId]);
+            for (let i = 0; i < actions.length; i++) {
+                const a = actions[i];
+                await supabase.query(
+                    `INSERT INTO wa_automation_actions (automation_id, order_index, action_type, config)
+                     VALUES ($1, $2, $3, $4)`,
+                    [autoId, i, a.type, JSON.stringify(a.config || {})]
+                );
+            }
+        }
+
+        // Save version
+        await supabase.query(
+            `INSERT INTO wa_automation_versions (automation_id, version, trigger_snapshot, conditions_snapshot, actions_snapshot, created_by, change_description)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [autoId, newVersion, JSON.stringify(trigger), JSON.stringify(conditions), JSON.stringify(actions), req.user.user_id, req.body.change_description || 'Atualização']
+        );
+
+        res.json({ success: true, version: newVersion });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.patch('/api/wa/automations/:autoId/toggle', authMiddleware, async (req, res) => {
+    try {
+        const { autoId } = req.params;
+        const result = await supabase.query(
+            `UPDATE wa_automations SET is_active = NOT is_active, updated_at = NOW() WHERE id = $1 RETURNING is_active`,
+            [autoId]
+        );
+        res.json({ success: true, is_active: result.rows[0]?.is_active });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/wa/automations/:autoId/duplicate', authMiddleware, async (req, res) => {
+    try {
+        const { autoId } = req.params;
+        const { organization_id } = req.user;
+
+        // Get original with all parts
+        const original = await supabase.query(`SELECT * FROM wa_automations WHERE id = $1`, [autoId]);
+        if (!original.rows[0]) return res.status(404).json({ success: false, error: 'Not found' });
+
+        const orig = original.rows[0];
+        const newResult = await supabase.query(
+            `INSERT INTO wa_automations (organization_id, name, description, is_active, priority, scope, instance_ids, conflict_mode, created_by)
+             VALUES ($1, $2, $3, false, $4, $5, $6, $7, $8) RETURNING *`,
+            [organization_id, orig.name + ' (Cópia)', orig.description, orig.priority, orig.scope, orig.instance_ids, orig.conflict_mode, req.user.user_id]
+        );
+        const newId = newResult.rows[0].id;
+
+        // Copy triggers, conditions, actions
+        await supabase.query(`INSERT INTO wa_automation_triggers (automation_id, trigger_type, config) SELECT $1, trigger_type, config FROM wa_automation_triggers WHERE automation_id = $2`, [newId, autoId]);
+        await supabase.query(`INSERT INTO wa_automation_conditions (automation_id, order_index, condition_type, operator, config, logic_gate) SELECT $1, order_index, condition_type, operator, config, logic_gate FROM wa_automation_conditions WHERE automation_id = $2`, [newId, autoId]);
+        await supabase.query(`INSERT INTO wa_automation_actions (automation_id, order_index, action_type, config) SELECT $1, order_index, action_type, config FROM wa_automation_actions WHERE automation_id = $2`, [newId, autoId]);
+
+        res.json({ success: true, data: newResult.rows[0] });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/wa/automations/:autoId/executions', authMiddleware, async (req, res) => {
+    try {
+        const { autoId } = req.params;
+        const { limit: lim } = req.query;
+
+        const result = await supabase.query(
+            `SELECT ae.*, wc.display_name as contact_name, wc.phone_number as contact_phone,
+                    wi.name as instance_name
+             FROM wa_automation_executions ae
+             LEFT JOIN wa_contacts wc ON wc.id = ae.contact_id
+             LEFT JOIN whatsapp_instances wi ON wi.id = ae.instance_id
+             WHERE ae.automation_id = $1
+             ORDER BY ae.started_at DESC LIMIT $2`,
+            [autoId, parseInt(lim) || 50]
+        );
+        res.json({ success: true, data: result.rows });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// --- PIPELINE STAGES ---
+app.get('/api/wa/pipeline-stages', authMiddleware, async (req, res) => {
+    try {
+        const { organization_id } = req.user;
+        const result = await supabase.query(
+            `SELECT * FROM wa_pipeline_stages WHERE organization_id = $1 ORDER BY order_index`,
+            [organization_id]
+        );
+        res.json({ success: true, data: result.rows });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// --- MESSAGE TEMPLATES ---
+app.get('/api/wa/templates', authMiddleware, async (req, res) => {
+    try {
+        const { organization_id } = req.user;
+        const result = await supabase.query(
+            `SELECT * FROM wa_message_templates WHERE organization_id = $1 AND is_active = true ORDER BY name`,
+            [organization_id]
+        );
+        res.json({ success: true, data: result.rows });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/wa/templates', authMiddleware, async (req, res) => {
+    try {
+        const { organization_id } = req.user;
+        const { name, category, body, media_url, variables } = req.body;
+
+        const result = await supabase.query(
+            `INSERT INTO wa_message_templates (organization_id, name, category, body, media_url, variables, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+            [organization_id, name, category, body, media_url, variables || '{}', req.user.user_id]
+        );
+        res.json({ success: true, data: result.rows[0] });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// --- DASHBOARD / STATS ---
+app.get('/api/wa/stats', authMiddleware, async (req, res) => {
+    try {
+        const { organization_id } = req.user;
+
+        const [instances, chats, contacts, automations, pendingIdentity] = await Promise.all([
+            supabase.query(`SELECT COUNT(*) as count FROM whatsapp_instances WHERE organization_id = $1`, [organization_id]),
+            supabase.query(`SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status = 'open') as open, COUNT(*) FILTER (WHERE status = 'waiting') as waiting FROM wa_chats WHERE organization_id = $1`, [organization_id]),
+            supabase.query(`SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE lead_id IS NOT NULL) as with_lead, COUNT(*) FILTER (WHERE mentorado_id IS NOT NULL) as with_mentorado FROM wa_contacts WHERE organization_id = $1 AND is_active = true`, [organization_id]),
+            supabase.query(`SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE is_active = true) as active FROM wa_automations WHERE organization_id = $1`, [organization_id]),
+            supabase.query(`SELECT COUNT(*) as count FROM wa_contacts WHERE organization_id = $1 AND identity_status = 'pending_resolution'`, [organization_id]),
+        ]);
+
+        res.json({
+            success: true,
+            data: {
+                instances: parseInt(instances.rows[0]?.count || 0),
+                chats: { total: parseInt(chats.rows[0]?.total || 0), open: parseInt(chats.rows[0]?.open || 0), waiting: parseInt(chats.rows[0]?.waiting || 0) },
+                contacts: { total: parseInt(contacts.rows[0]?.total || 0), with_lead: parseInt(contacts.rows[0]?.with_lead || 0), with_mentorado: parseInt(contacts.rows[0]?.with_mentorado || 0) },
+                automations: { total: parseInt(automations.rows[0]?.total || 0), active: parseInt(automations.rows[0]?.active || 0) },
+                pending_identity: parseInt(pendingIdentity.rows[0]?.count || 0)
+            }
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// --- LINK CONTACT TO LEAD/MENTORADO ---
+app.post('/api/wa/contacts/:contactId/link', authMiddleware, async (req, res) => {
+    try {
+        const { contactId } = req.params;
+        const { lead_id, mentorado_id } = req.body;
+
+        const updates = [];
+        const params = [contactId];
+        let idx = 2;
+
+        if (lead_id !== undefined) {
+            updates.push(`lead_id = $${idx}`);
+            params.push(lead_id);
+            idx++;
+        }
+        if (mentorado_id !== undefined) {
+            updates.push(`mentorado_id = $${idx}`);
+            params.push(mentorado_id);
+            idx++;
+        }
+
+        if (updates.length === 0) return res.json({ success: false, error: 'No fields to update' });
+
+        await supabase.query(
+            `UPDATE wa_contacts SET ${updates.join(', ')}, updated_at = NOW() WHERE id = $1`,
+            params
+        );
+
+        // Log
+        await supabase.query(
+            `INSERT INTO wa_contact_history (contact_id, organization_id, action, description, actor_type, actor_id)
+             SELECT $1, organization_id, 'linked', $2, 'user', $3 FROM wa_contacts WHERE id = $1`,
+            [contactId, `Vinculado a: ${lead_id ? 'lead ' + lead_id : ''} ${mentorado_id ? 'mentorado ' + mentorado_id : ''}`, req.user.email]
+        );
+
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// =====================================================================
+// END WHATSAPP SYSTEM V2
+// =====================================================================
+
 app.listen(port, async () => {
     console.log(`🚀 WhatsApp Multi-User Baileys API rodando em https://api.medicosderesultado.com.br`);
     console.log(`👥 Sistema preparado para múltiplos usuários`);
