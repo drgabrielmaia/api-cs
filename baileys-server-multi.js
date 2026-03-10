@@ -218,7 +218,7 @@ app.use(cors({
     origin: true, // Allow all origins (nginx handles prod restrictions)
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning']
+    allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning', 'X-API-Key']
 }));
 
 // Middleware para capturar body raw (necessário para validação HMAC do Instagram)
