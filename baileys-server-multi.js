@@ -638,7 +638,11 @@ app.post('/api/query', (req, res, next) => {
         }
     }
     const op = req.body?.operation || 'select';
-    if (!req.user && op !== 'select') {
+    // Tables that allow public writes (forms, lead capture, booking links)
+    const PUBLIC_WRITE_TABLES = ['form_submissions', 'leads', 'agendamento_links'];
+    const table = req.body?.table || '';
+    const isPublicWrite = PUBLIC_WRITE_TABLES.includes(table);
+    if (!req.user && op !== 'select' && !isPublicWrite) {
         return res.status(401).json({ data: null, error: { message: 'Token necessário para operações de escrita' } });
     }
     next();
