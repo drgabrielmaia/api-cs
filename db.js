@@ -822,14 +822,20 @@ class QueryBuilder {
         }
 
         const colList = allKeys.map(k => `"${k}"`).join(', ');
-        const conflictCol = this._upsertConflict || 'id';
+        // Support multi-column conflict: 'col1,col2' or ['col1','col2']
+        const rawConflict = this._upsertConflict || 'id';
+        const conflictCols = Array.isArray(rawConflict)
+            ? rawConflict.map(c => c.trim())
+            : String(rawConflict).split(',').map(c => c.trim());
+        const conflictTarget = conflictCols.map(c => `"${c}"`).join(', ');
+        const conflictSet = new Set(conflictCols);
         const updateCols = allKeys
-            .filter(k => k !== conflictCol)
+            .filter(k => !conflictSet.has(k))
             .map(k => `"${k}" = EXCLUDED."${k}"`)
             .join(', ');
 
         let sql = `INSERT INTO "${this._table}" (${colList}) VALUES ${rowPlaceholders.join(', ')}`;
-        sql += ` ON CONFLICT ("${conflictCol}") DO UPDATE SET ${updateCols}`;
+        sql += ` ON CONFLICT (${conflictTarget}) DO UPDATE SET ${updateCols}`;
 
         if (this._returnData) {
             sql += ' RETURNING *';
